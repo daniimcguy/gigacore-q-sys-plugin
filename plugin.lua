@@ -1,5 +1,9 @@
 ﻿-- plugin.lua (skeleton)
+
 --[[ #include "info.lua" ]]
+
+-- Generated per-model port coordinates (see tools/parse_svg_ports.py).
+--[[ #include "port_coords.generated.lua" ]]
 
 function GetProperties(props)
   --[[ #include "properties.lua" ]]
