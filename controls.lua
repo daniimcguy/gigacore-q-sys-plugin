@@ -149,15 +149,15 @@ for p = 1, portCount do
     Value = "Auto",
   }
 
-  -- Port group membership display — read-only Button colored with the
-  -- group's color, Legend = friendly group/trunk name. Picker UI later.
+  -- Port group membership cell — Button colored with the group's color,
+  -- Legend = friendly group/trunk name. Click opens the group picker panel
+  -- (zPicker.* controls below) to reassign the port.
   c[#c+1] = {
     Name        = "Port.Group " .. p,
     ControlType = "Button",
-    ButtonType  = "Toggle",
+    ButtonType  = "Momentary",
     PinStyle    = "Output",
     UserPin     = true,
-    IsReadOnly  = true,
   }
 
   -- RLinkX ring edges (4 thin rectangles forming a ring around each port).
@@ -196,14 +196,15 @@ for p = 1, portCount do
     Value       = "",
   }
 
+  -- Trunk corner marker: a flat Button whose centered Legend is the "◤"
+  -- glyph (predictable placement, unlike a Text box's padding).
   c[#c+1] = {
     Name        = "Port.Trunk Badge " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
+    ControlType = "Button",
+    ButtonType  = "Toggle",
     PinStyle    = "None",
     UserPin     = false,
     IsReadOnly  = true,
-    Value       = "",
   }
 
   -- Group color surround (SVG overlay mode). Text control — backup pattern:
@@ -229,18 +230,6 @@ for p = 1, portCount do
     IsReadOnly  = true,
   }
 
-  -- Port number display — Text control, sorts last alphabetically via
-  -- "Port.z Num N" so it renders on top of the halo and Port.Link.
-  c[#c+1] = {
-    Name        = "Port.z Num " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-    Value       = "",
-  }
-
   -- Disabled-port X marker — rendered in red in the center of the port when
   -- the port is disabled. Sorts last ("zz" > "z") so it paints on top of
   -- the port number.
@@ -264,6 +253,66 @@ for p = 1, portCount do
     UserPin     = true,
   }
 end
+
+-- Design-time properties are not readable at runtime, so the ones the
+-- runtime needs are mirrored into hidden read-only text controls whose
+-- initial Value comes from props.
+local function propValue(name, default)
+  local p = props and props[name]
+  local v = (type(p) == "table") and p.Value or p
+  return v or default
+end
+
+c[#c+1] = {
+  Name        = "Theme",
+  ControlType = "Text",
+  TextBoxType = "ReadOnly",
+  PinStyle    = "None",
+  UserPin     = false,
+  IsReadOnly  = true,
+  Value       = (propValue("Dark Mode", "Yes") == "No") and "light" or "dark",
+}
+
+c[#c+1] = {
+  Name        = "Poll Interval",
+  ControlType = "Text",
+  TextBoxType = "ReadOnly",
+  PinStyle    = "None",
+  UserPin     = false,
+  IsReadOnly  = true,
+  Value       = propValue("Poll Interval", "15 s"),
+}
+
+-- Group picker panel (main page). Hidden until a Port.Group cell is clicked;
+-- items mirror the Groups and Trunks page slots: zPicker.Group 1..20
+-- predefined, 21.. custom slots, zPicker.Trunk 1 = ISL, 2.. custom slots.
+local function pickerButton(name)
+  c[#c+1] = {
+    Name        = name,
+    ControlType = "Button",
+    ButtonType  = "Momentary",
+    PinStyle    = "None",
+    UserPin     = false,
+  }
+end
+local function pickerText(name)
+  c[#c+1] = {
+    Name        = name,
+    ControlType = "Text",
+    TextBoxType = "ReadOnly",
+    PinStyle    = "None",
+    UserPin     = false,
+    IsReadOnly  = true,
+    Value       = "",
+  }
+end
+pickerButton("zPicker.Bg")
+pickerText("zPicker.Title")
+pickerButton("zPicker.None")
+pickerButton("zPicker.Cancel")
+for i = 1, 4 do pickerText("zPicker.Label " .. i) end
+for i = 1, 20 + CUSTOM_GROUP_SLOTS do pickerButton("zPicker.Group " .. i) end
+for i = 1, 1 + CUSTOM_TRUNK_SLOTS do pickerButton("zPicker.Trunk " .. i) end
 
 -- Logo identify button — invisible Button overlay on the Luminex logo
 -- inside the chassis. Click PUTs /api/identify on the device.

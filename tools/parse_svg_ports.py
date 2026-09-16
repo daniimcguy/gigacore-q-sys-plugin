@@ -17,7 +17,7 @@ Strategy:
 Usage:  python3 tools/parse_svg_ports.py
 Emits:  port_coords.generated.lua (consumed at plugin build time)
 """
-import os, re, sys
+import os, re, sys, base64
 import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +45,7 @@ PORT_LAYOUT = {
     "GigaCore 16i":    dict(ethercon=0,  rj45=12, sfp=4),
     "GigaCore 16t":    dict(ethercon=8,  rj45=8,  sfp=0),
     "GigaCore 16tf":   dict(ethercon=12, rj45=0,  sfp=4),
-    "GigaCore 18t":    dict(ethercon=8,  rj45=6,  sfp=2),
+    "GigaCore 18t":    dict(ethercon=8,  rj45=8,  sfp=2),
     "GigaCore 20t":    dict(ethercon=8,  rj45=8,  sfp=4),
     "GigaCore 30i":    dict(ethercon=0,  rj45=24, sfp=6),
     "GigaCore O26-I":  dict(ethercon=0,  rj45=0,  sfp=26),
@@ -55,45 +55,80 @@ PORT_LAYOUT = {
 NS = "{http://www.w3.org/2000/svg}"
 
 
+IDENTITY = (1.0, 1.0, 0.0, 0.0)
+
+
+def compose(parent, child):
+    """Compose two (sx, sy, tx, ty) transforms (diagonal-scale + translate
+    only, sufficient for the rotate(180)-or-no-rotation transforms used by
+    these chassis SVGs). result(P) = parent(child(P))."""
+    psx, psy, ptx, pty = parent
+    csx, csy, ctx, cty = child
+    return (psx * csx, psy * csy,
+            psx * ctx + ptx, psy * cty + pty)
+
+
 def parse_transform(s):
-    dx = dy = 0.0
+    """Parse a SVG transform attribute into a (sx, sy, tx, ty) tuple.
+    Handles translate(tx [ty]) and rotate(180); ignores other rotations."""
+    M = IDENTITY
     if not s:
-        return dx, dy
-    for m in re.finditer(r"translate\(\s*([-.\d]+)[,\s]+([-.\d]+)\s*\)", s):
-        dx += float(m.group(1))
-        dy += float(m.group(2))
-    return dx, dy
+        return M
+    for name, args in re.findall(r"(translate|rotate)\(([^)]*)\)", s):
+        if name == "translate":
+            parts = re.split(r"[,\s]+", args.strip())
+            dx = float(parts[0])
+            dy = float(parts[1]) if len(parts) > 1 else 0.0
+            step = (1.0, 1.0, dx, dy)
+        else:  # rotate
+            angle = float(args.split(",")[0].strip())
+            if abs(abs(angle) - 180) < 0.001:
+                step = (-1.0, -1.0, 0.0, 0.0)
+            else:
+                step = IDENTITY
+        M = compose(M, step)
+    return M
 
 
-def walk(elem, off_x, off_y, inherited_fill, inherited_stroke, shapes):
-    t = elem.attrib.get("transform", "")
-    dx, dy = parse_transform(t)
-    cx_off = off_x + dx
-    cy_off = off_y + dy
+def walk(elem, M_parent, inherited_fill, inherited_stroke, shapes):
+    M_local = parse_transform(elem.attrib.get("transform", ""))
+    M = compose(M_parent, M_local)
+    sx, sy, tx, ty = M
     own_fill = elem.attrib.get("fill", inherited_fill)
     own_stroke = elem.attrib.get("stroke", inherited_stroke)
     tag = elem.tag.replace(NS, "")
     if tag == "rect":
         a = elem.attrib
-        x = float(a.get("x", 0)) + cx_off
-        y = float(a.get("y", 0)) + cy_off
-        w = float(a["width"])
-        h = float(a["height"])
+        x_local = float(a.get("x", 0))
+        y_local = float(a.get("y", 0))
+        w_local = float(a["width"])
+        h_local = float(a["height"])
+        # Apply transform to both corners; rotate(180) flips both signs so
+        # we normalize to positive width/height after.
+        x1 = sx * x_local + tx
+        y1 = sy * y_local + ty
+        x2 = sx * (x_local + w_local) + tx
+        y2 = sy * (y_local + h_local) + ty
+        x_min, x_max = (x1, x2) if x1 <= x2 else (x2, x1)
+        y_min, y_max = (y1, y2) if y1 <= y2 else (y2, y1)
         shapes.append(dict(
-            kind="rect", x=x, y=y, w=w, h=h,
+            kind="rect", x=x_min, y=y_min, w=x_max - x_min, h=y_max - y_min,
             fill=own_fill, stroke=own_stroke,
         ))
     elif tag == "circle":
         a = elem.attrib
-        cx = float(a.get("cx", 0)) + cx_off
-        cy = float(a.get("cy", 0)) + cy_off
-        r = float(a["r"])
+        cx_local = float(a.get("cx", 0))
+        cy_local = float(a.get("cy", 0))
+        r = float(a["r"])  # uniform-scale or rotation-only — radius preserved
         shapes.append(dict(
-            kind="circle", cx=cx, cy=cy, r=r,
+            kind="circle",
+            cx=sx * cx_local + tx,
+            cy=sy * cy_local + ty,
+            r=r,
             fill=own_fill, stroke=own_stroke,
         ))
     for child in elem:
-        walk(child, cx_off, cy_off, own_fill, own_stroke, shapes)
+        walk(child, M, own_fill, own_stroke, shapes)
 
 
 def collect_cable_clips(shapes):
@@ -115,9 +150,11 @@ def collect_cable_clips(shapes):
 
 
 def attach_cable_clips(ports, clips, vb_h, tol=3.0):
-    """Assign the closest cable clip (by x-center) to each port, matching the
-    clip that's on the correct side of the port (above for top-row, below
-    for bottom-row). Mutates ports in place adding a 'poe' dict when found."""
+    """Assign the closest cable clip (by x-center) to each port. The clip
+    must be on the correct side of the port's vertical center: above the
+    port-center for top-row ports, below for bottom-row ports. (Many clips
+    overlap the port's top/bottom edge, so we can't require the clip to be
+    fully outside the port.) Mutates ports in place adding 'poe' dict."""
     mid_y = vb_h / 2
     for p in ports:
         pcx = p["x"] + p["w"] / 2
@@ -131,12 +168,12 @@ def attach_cable_clips(ports, clips, vb_h, tol=3.0):
             dx = abs(ccx - pcx)
             if dx > tol:
                 continue
-            if is_top_row:
-                if ccy >= p["y"]:
-                    continue  # need clip strictly above port
-            else:
-                if ccy <= p["y"] + p["h"]:
-                    continue  # need clip strictly below port
+            # Allow clips overlapping the port edge: only require their
+            # center to be on the correct side of the port's center.
+            if is_top_row and ccy >= pcy:
+                continue
+            if (not is_top_row) and ccy <= pcy:
+                continue
             if best is None or dx < best_dist:
                 best = c
                 best_dist = dx
@@ -203,6 +240,20 @@ def collect_port_slots(shapes, vb_w, vb_h):
             uniq_rect[key] = r
     rects = list(uniq_rect.values())
 
+    # Drop decorative ellipses that sit inside (or nearly coincident with) a
+    # port rect. On t-models each SFP has both a rect (the cage) and an
+    # ellipse drawn behind it; without this filter we'd double-count.
+    def circle_overlaps_rect(c, r, pad=2):
+        cx, cy = c["cx"], c["cy"]
+        return (r["x"] - pad <= cx <= r["x"] + r["w"] + pad
+                and r["y"] - pad <= cy <= r["y"] + r["h"] + pad)
+    real_circles = []
+    for c in circles:
+        decorative = any(circle_overlaps_rect(c, r) for r in rects)
+        if not decorative:
+            real_circles.append(c)
+    circles = real_circles
+
     # Express everything as {kind, x, y, w, h} in SVG space
     slots = []
     for c in circles:
@@ -255,35 +306,123 @@ def apply_kinds(slots, model):
     return ordered
 
 
+def uniform_sizes(ports):
+    """Give every port of a kind the same width/height (the median), keeping
+    each port's centre. The Araneo artwork has sub-unit size jitter between
+    ports that turns into 1px differences on screen."""
+    by_kind = {}
+    for p in ports:
+        by_kind.setdefault(p["kind"], []).append(p)
+    for kind, group in by_kind.items():
+        ws = sorted(p["w"] for p in group)
+        hs = sorted(p["h"] for p in group)
+        w = ws[len(ws) // 2]
+        h = hs[len(hs) // 2]
+        for p in group:
+            cx = p["x"] + p["w"] / 2
+            cy = p["y"] + p["h"] / 2
+            p["x"], p["y"], p["w"], p["h"] = cx - w / 2, cy - h / 2, w, h
+    # Same y for every port of a kind in the same row (top / bottom).
+    if not ports:
+        return
+    mid = max(p["y"] + p["h"] / 2 for p in ports) / 2 + min(p["y"] + p["h"] / 2 for p in ports) / 2
+    by_row = {}
+    for p in ports:
+        row = "top" if (p["y"] + p["h"] / 2) < mid else "bottom"
+        by_row.setdefault((p["kind"], row), []).append(p)
+    for group in by_row.values():
+        ys = sorted(p["y"] for p in group)
+        y = ys[len(ys) // 2]
+        for p in group:
+            p["y"] = y
+
+
+def force_all_ethercon(ports):
+    """Force every port to kind="ethercon" with consistent 17x17 dimensions.
+    Used for models whose real hardware is all ethercon but whose SVG shows
+    some ports as SFP-shaped slots."""
+    for p in ports:
+        p["kind"] = "ethercon"
+        if p["w"] < 13:
+            cx = p["x"] + p["w"] / 2
+            cy = p["y"] + p["h"] / 2
+            p["x"] = cx - 8.5
+            p["y"] = cy - 8.5
+            p["w"] = 17.0
+            p["h"] = 17.0
+
+
+def renumber_by_x(ports, desired_order):
+    """Assign port numbers left-to-right per desired_order."""
+    sorted_by_x = sorted(ports, key=lambda p: p["x"])
+    if len(sorted_by_x) != len(desired_order):
+        return
+    for i, p in enumerate(sorted_by_x):
+        p["port"] = desired_order[i]
+    ports.sort(key=lambda p: p["port"])
+
+
+ALL_ETHERCON_MODELS = {"GigaCore 10t", "GigaCore 10t-IP", "GigaCore 16tf"}
+
+# SVG units kept left of port 1 after cropping (room for the group halo).
+CROP_MARGIN = 6.0
+
+PORT_ORDER_BY_X = {
+    "GigaCore 10t":    [1, 2, 3, 4, 9, 10, 5, 6, 7, 8],
+    # 10t-IP: ports 9-10 sit on the rear panel; the chassis SVG follows
+    # Araneo's project mode (1-8 left, 9-10 right), so x order is port order.
+}
+
+
 def parse_model(model, fname):
     tree = ET.parse(os.path.join(ASSETS, fname))
     root = tree.getroot()
     vb = root.attrib.get("viewBox", "0 0 0 0").split()
     vb_w, vb_h = float(vb[2]), float(vb[3])
     shapes = []
-    walk(root, 0.0, 0.0, None, None, shapes)
+    walk(root, IDENTITY, None, None, shapes)
     slots = collect_port_slots(shapes, vb_w, vb_h)
     ordered = assign_port_order(slots)
     ports = apply_kinds(ordered, model)
     clips = collect_cable_clips(shapes)
     attach_cable_clips(ports, clips, vb_h)
-    return vb_w, vb_h, ports
+    if model in ALL_ETHERCON_MODELS:
+        force_all_ethercon(ports)
+    uniform_sizes(ports)
+    if model in PORT_ORDER_BY_X:
+        renumber_by_x(ports, PORT_ORDER_BY_X[model])
+    # Crop the artwork left of port 1: that area only holds the model text
+    # in the Araneo assets, and the plugin draws its own device display
+    # block there instead. The chassis outline's left edge is cut away on
+    # purpose (the display block closes the frame).
+    crop = max(0.0, min(p["x"] for p in ports) - CROP_MARGIN)
+    for p in ports:
+        p["x"] -= crop
+        if "poe" in p:
+            p["poe"]["x"] -= crop
+    svg_src = open(os.path.join(ASSETS, fname), "rb").read().decode("utf-8")
+    svg_src = re.sub(r'viewBox="[^"]*"', f'viewBox="{crop:.3f} 0 {vb_w - crop:.3f} {vb_h}"', svg_src, count=1)
+    svg_src = re.sub(r'\swidth="[^"]*"', "", svg_src, count=1)
+    svg_src = re.sub(r'\sheight="[^"]*"', "", svg_src, count=1)
+    svg_b64 = base64.b64encode(svg_src.encode("utf-8")).decode("ascii")
+    return vb_w - crop, vb_h, ports, svg_b64
 
 
 def emit_lua(path):
     with open(path, "w", encoding="utf-8") as out:
         out.write("-- Auto-generated from SVGs by tools/parse_svg_ports.py\n")
-        out.write("-- Port coordinates are in SVG viewBox space.\n")
+        out.write("-- Port coordinates are in (cropped) SVG viewBox space; svg = base64 artwork.\n")
         out.write("PORT_COORDS = PORT_COORDS or {}\n\n")
         total = 0
         for model, fn in SVG_MAP:
             try:
-                vw, vh, ports = parse_model(model, fn)
+                vw, vh, ports, svg_b64 = parse_model(model, fn)
             except Exception as e:
                 print(f"  WARN {model}: {e}", file=sys.stderr)
                 continue
             out.write(f'PORT_COORDS["{model}"] = {{\n')
-            out.write(f'  viewBox = {{ w = {vw}, h = {vh} }},\n')
+            out.write(f'  viewBox = {{ w = {vw:.3f}, h = {vh} }},\n')
+            out.write(f'  svg     = "{svg_b64}",\n')
             out.write('  ports   = {\n')
             for p in ports:
                 poe = ""

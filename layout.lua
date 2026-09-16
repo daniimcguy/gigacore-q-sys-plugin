@@ -8,6 +8,92 @@ local portCount      = getPortCount(modelString)
 state.portCount      = portCount
 state.selectedModel  = modelString  -- so runtime (no Properties access) can warn on mismatch
 
+-- Port-settings grid geometry, shared by the chassis page and the page
+-- size helpers. One column = label + enable + legend + rlinkx + poe toggle
+-- + poe bounce + group + speed.
+local GRID_COL_W   = 16 + 20 + 50 + 20 + 20 + 20 + 72 + 110
+local GRID_COL_PAD = 6
+local GRID_X_START = 12
+local GRID_ROW_H   = 22
+
+-- Plugin width per model so that every chassis has the same right-side
+-- margin (380px from chassis right edge to plugin right edge). Reserves
+-- consistent space for future info controls regardless of chassis width.
+-- Chassis strip geometry shared by the page builders: [display block]
+-- [cropped chassis SVG], both CHASSIS_H tall, starting at CHASSIS_X / _Y.
+local CHASSIS_X  = 20
+local CHASSIS_Y  = 4
+local CHASSIS_H  = 104
+local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
+local DISPLAY_GAP = 0    -- block butts against the cropped chassis
+
+local function chassisSvgWidth(model)
+  local coords = getPortCoords(model)
+  if coords then
+    return math.floor(coords.viewBox.w * CHASSIS_H / coords.viewBox.h + 0.5)
+  end
+  return 760
+end
+
+local function pageWidthForModel(model)
+  local rightMargin = 380
+  return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisSvgWidth(model) + rightMargin
+end
+
+-- Grid columns: as many as the page width fits; rows: ceil(ports / cols).
+-- Ports fill column by column (1..rows down the first column, then the
+-- next), so the page stays as short as the width allows.
+local function gridDimsForModel(model)
+  local pageW = pageWidthForModel(model)
+  local cols  = math.floor((pageW - GRID_X_START + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
+  local pc    = getPortCount(model) or 30
+  cols = math.max(1, math.min(cols, pc))
+  local rows = math.ceil(pc / cols)
+  return cols, rows
+end
+
+-- Groups and Trunks page geometry. Sections sit side by side (groups,
+-- custom groups, trunks, custom trunks); each is a vertical list that
+-- spills into extra sub-columns. Rows per section = the smallest count that
+-- keeps all four sections inside the page width.
+local GT_TOP_Y, GT_LABEL_H, GT_CARD_W, GT_CARD_H, GT_GAP_Y, GT_SECTION_GAP, GT_MARGIN_X = 55, 16, 90, 18, 3, 14, 16
+local GT_SECTION_ITEMS = { 20, CUSTOM_GROUP_SLOTS, 1, CUSTOM_TRUNK_SLOTS }
+
+local function groupsPageWidthForRows(rows)
+  local w = GT_MARGIN_X
+  for i, n in ipairs(GT_SECTION_ITEMS) do
+    local subCols = math.max(1, math.ceil(n / rows))
+    w = w + subCols * GT_CARD_W + (subCols - 1) * 4
+    if i < #GT_SECTION_ITEMS then w = w + GT_SECTION_GAP end
+  end
+  return w + GT_MARGIN_X
+end
+
+local function groupsRowsForModel(model)
+  local pageW = pageWidthForModel(model)
+  for rows = 4, 20 do
+    if groupsPageWidthForRows(rows) <= pageW then return rows end
+  end
+  return 20
+end
+
+local function groupsPageHeightForModel(model)
+  local rows = groupsRowsForModel(model)
+  return GT_TOP_Y + GT_LABEL_H + 6 + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + 10
+end
+
+local function chassisPageHeightForModel(model)
+  local topGap = 6
+  local _cols, rows = gridDimsForModel(model)
+  return CHASSIS_Y + CHASSIS_H + topGap + (rows * GRID_ROW_H) + topGap
+end
+
+-- One height for every page of a model so tab switches don't resize the
+-- plugin: the taller of the chassis page and the groups page.
+local function pageHeightForModel(model)
+  return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
+end
+
 --------------------------------------------------------------------------------
 -- Single port block — faithful replica of the December 2025 backup design.
 --
@@ -110,7 +196,7 @@ end
 --   Col 2: [Switch Name] / [Description]   — middle
 --   Col 3: [IP/Subnet]   / [MAC]           — right
 local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
-  local row1Y, row2Y = 3, 25
+  local row1Y, row2Y = 2, 22
   local rowH = 20
   local x0 = 10
 
@@ -120,6 +206,37 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
   local gap     = 10
   local col2X = x0 + statusW + gap
   local col3X = col2X + nameW + gap
+
+  -- Offline placeholders (static graphics). The controls above them are
+  -- transparent until the runtime paints them with live data, so a design
+  -- that was never emulated still shows a finished header.
+  local textPad = 4
+  local function placeholder(x, y, w, text, align)
+    gfx[#gfx+1] = {
+      Type       = "Text",
+      Text       = text,
+      Position   = { x + textPad, y },
+      Size       = { w - textPad * 2, rowH },
+      Font       = "Roboto",
+      FontSize   = 11,
+      Color      = theme.textMuted,
+      HTextAlign = align or "Left",
+      VTextAlign = "Center",
+    }
+  end
+  gfx[#gfx+1] = {
+    Type         = "Rectangle",
+    Position     = { x0, row1Y },
+    Size         = { statusW, rowH },
+    Fill         = theme.badgeOffBg,
+    StrokeWidth  = 0,
+    CornerRadius = 6,
+  }
+  placeholder(x0, row1Y, statusW, "Offline", "Center")
+  placeholder(x0, row2Y, statusW, "---", "Center")
+  placeholder(col2X, row1Y, nameW, state.selectedModel or "GigaCore")
+  placeholder(col3X, row1Y, infoW, "---")
+  placeholder(col3X, row2Y, infoW, "---")
 
   layout["Device.Status"] = {
     Style        = "Text",
@@ -142,7 +259,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     Position     = { col2X, row1Y },
     Size         = { nameW, rowH },
     IsReadOnly   = true,
-    Color        = theme.indicatorFill,
+    Color        = { 0, 0, 0, 0 },
     StrokeColor  = theme.strokeColor,
     StrokeWidth  = 0,
     TextColor    = theme.textColor,
@@ -158,7 +275,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     Position     = { col2X, row2Y },
     Size         = { nameW, rowH },
     IsReadOnly   = true,
-    Color        = theme.indicatorFill,
+    Color        = { 0, 0, 0, 0 },
     StrokeColor  = theme.strokeColor,
     StrokeWidth  = 0,
     TextColor    = theme.textColor,
@@ -174,7 +291,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     Position     = { col3X, row1Y },
     Size         = { infoW, rowH },
     IsReadOnly   = true,
-    Color        = theme.indicatorFill,
+    Color        = { 0, 0, 0, 0 },
     StrokeColor  = theme.strokeColor,
     StrokeWidth  = 0,
     TextColor    = theme.textColor,
@@ -190,7 +307,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     Position     = { col3X, row2Y },
     Size         = { infoW, rowH },
     IsReadOnly   = true,
-    Color        = theme.indicatorFill,
+    Color        = { 0, 0, 0, 0 },
     StrokeColor  = theme.strokeColor,
     StrokeWidth  = 0,
     TextColor    = theme.textColor,
@@ -206,7 +323,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     Position     = { x0, row2Y },
     Size         = { statusW, rowH },
     IsReadOnly   = true,
-    Color        = theme.indicatorFill,
+    Color        = { 0, 0, 0, 0 },
     StrokeColor  = theme.strokeColor,
     StrokeWidth  = 0,
     TextColor    = theme.textColor,
@@ -469,22 +586,27 @@ end
 --------------------------------------------------------------------------------
 local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
   local vbW, vbH   = coords.viewBox.w, coords.viewBox.h
-  -- SVG sits just below the two-row header (header ends y~45).
-  local svgX, svgY = 20, 50
-  local svgW       = 960
-  local svgH       = math.floor(vbH * svgW / vbW + 0.5)
+  -- All chassis render at the same visible height. The artwork is cropped
+  -- left of port 1 (parser) and the device display block fills that spot,
+  -- like Araneo's screen. Width scales by aspect ratio.
+  local blockX, blockY = CHASSIS_X, CHASSIS_Y
+  local svgX, svgY = blockX + DISPLAY_W + DISPLAY_GAP, CHASSIS_Y
+  local svgH       = CHASSIS_H
+  local svgW       = chassisSvgWidth(model)
   local sx         = svgW / vbW
   local sy         = svgH / vbH
   local svgBottomY = svgY + svgH
 
-  -- Per-port settings grid below the chassis.
-  local gridY     = svgBottomY + 18
-  local rows      = 8
+  -- Per-port settings grid below the chassis. Bottom gap matches the top
+  -- gap so the page is symmetrically padded; column and row counts come
+  -- from gridDimsForModel.
+  local topGap    = 6
+  local gridY     = svgBottomY + topGap
+  local cols, rows = gridDimsForModel(model)
   local portCount = #coords.ports
-  local cols      = math.ceil(portCount / rows)
-  local rowH      = 22
-  local gridH     = rows * rowH
-  local pageH     = 365  -- standardized across all pages
+  local rowH      = GRID_ROW_H
+  local poePorts  = (PORT_LAYOUT[model] and PORT_LAYOUT[model].poe) or 0
+  local pageH     = pageHeightForModel(model)
 
   gfx[#gfx+1] = {
     Type        = "Groupbox",
@@ -492,12 +614,26 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     StrokeColor = GROUPBOX_STROKE_COLOR,
     StrokeWidth = GROUPBOX_STROKE_WIDTH,
     Position    = GROUPBOX_POSITION,
-    Size        = { 1250, pageH },
+    Size        = { pageWidthForModel(model), pageH },
   }
 
-  defineCommonDeviceInfo(layout, gfx, theme, 0, 0)
+  -- Device display block: closes the chassis frame on the left (the SVG's
+  -- own left edge is cropped away). Page-bg fill (the Araneo "screen"), and
+  -- the same white outline weight as the artwork (1 SVG unit = sx px).
+  local outlineW = math.max(1, math.floor(sx + 0.5))
+  gfx[#gfx+1] = {
+    Type         = "Rectangle",
+    Position     = { blockX, blockY },
+    Size         = { DISPLAY_W + outlineW, svgH },
+    Fill         = theme.pageBg,
+    StrokeColor  = { 255, 255, 255, 255 },
+    StrokeWidth  = outlineW,
+    CornerRadius = 4,
+  }
+  local scrX, scrY = blockX + outlineW, blockY + outlineW
+  local scrW, scrH = DISPLAY_W - outlineW * 2, svgH - outlineW * 2
 
-  -- Chassis SVG backdrop
+  -- Chassis SVG backdrop (cropped artwork)
   gfx[#gfx+1] = {
     Type     = "Svg",
     Image    = svgImg,
@@ -505,39 +641,27 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     Size     = { svgW, svgH },
   }
 
-  -- Cover the chassis's embedded model text (positioned top-left inside the
-  -- chassis on all SVGs, roughly SVG y=5..30) with a page-bg rectangle that
-  -- spans the full chassis interior height. The Luminex logo sits on top,
-  -- vertically centered inside the chassis.
-  local logoH = 28
+  -- Screen contents: logo + status badge on the first row, then model,
+  -- device name, IP, firmware + MAC. Static placeholders sit under the
+  -- transparent controls for the offline (never emulated) look; the
+  -- runtime paints a control opaque when live data lands in it.
+  local pad   = 5
+  local logoH = 16
   local logoW = math.floor(logoH * 3.3 + 0.5)
-  local badgeInset = 2
-  local badgeW = logoW + 24
-  local badgeSvgYTop, badgeSvgYBot = 2, vbH - 2  -- cover interior, stay inside stroke
-  local badgeX = svgX + badgeInset
-  local badgeY = svgY + badgeSvgYTop * sy
-  local badgeH = (badgeSvgYBot - badgeSvgYTop) * sy
-  gfx[#gfx+1] = {
-    Type        = "Rectangle",
-    Position    = { badgeX, badgeY },
-    Size        = { badgeW, badgeH },
-    Fill        = theme.pageBg,
-    StrokeWidth = 0,
-  }
+  local logoX, logoY = scrX + pad, scrY + pad
   gfx[#gfx+1] = {
     Type     = "Svg",
     Image    = LogoLuminex,
-    Position = { badgeX + (badgeW - logoW) / 2, badgeY + (badgeH - logoH) / 2 },
+    Position = { logoX, logoY },
     Size     = { logoW, logoH },
   }
-
-  -- Invisible button covering the logo area — click triggers /api/identify.
+  -- Invisible button covering the logo — click triggers /api/identify.
   layout["Device.Identify"] = {
     Style             = "Button",
     ButtonStyle       = "Momentary",
     ButtonVisualStyle = "Flat",
-    Position          = { badgeX, badgeY },
-    Size              = { badgeW, badgeH },
+    Position          = { logoX, logoY },
+    Size              = { logoW, logoH },
     Color             = { 0, 0, 0, 0 },
     OffColor          = { 0, 0, 0, 0 },
     StrokeColor       = { 0, 0, 0, 0 },
@@ -545,9 +669,137 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     Legend            = "",
   }
 
+  local statusW, statusH = 56, 16
+  local statusX = scrX + scrW - pad - statusW
+  local statusY = scrY + pad
+  gfx[#gfx+1] = {
+    Type         = "Rectangle",
+    Position     = { statusX, statusY },
+    Size         = { statusW, statusH },
+    Fill         = theme.badgeOffBg,
+    StrokeWidth  = 0,
+    CornerRadius = 6,
+  }
+  gfx[#gfx+1] = {
+    Type       = "Text",
+    Text       = "Offline",
+    Position   = { statusX, statusY },
+    Size       = { statusW, statusH },
+    Font       = "Roboto",
+    FontSize   = 10,
+    Color      = theme.badgeOffFg,
+    HTextAlign = "Center",
+    VTextAlign = "Center",
+  }
+  layout["Device.Status"] = {
+    Style        = "Text",
+    Position     = { statusX, statusY },
+    Size         = { statusW, statusH },
+    IsReadOnly   = true,
+    Color        = { 0, 0, 0, 0 },
+    Font         = "Roboto",
+    FontSize     = 10,
+    TextColor    = { 255, 255, 255 },
+    StrokeWidth  = 0,
+    CornerRadius = 6,
+    HTextAlign   = "Center",
+    VTextAlign   = "Center",
+  }
+
+  local lineH = 14
+  local lineX = scrX + pad
+  local lineW = scrW - pad * 2
+  local line1 = logoY + logoH + 3
+  local function screenText(x, y, w, text, color, bold)
+    gfx[#gfx+1] = {
+      Type       = "Text",
+      Text       = text,
+      Position   = { x, y },
+      Size       = { w, lineH },
+      Font       = "Roboto",
+      FontSize   = 10,
+      Color      = color,
+      HTextAlign = "Left",
+      VTextAlign = "Center",
+      IsBold     = bold or false,
+    }
+  end
+  local function screenBox(name, x, y, w)
+    layout[name] = {
+      Style        = "Text",
+      Position     = { x, y },
+      Size         = { w, lineH },
+      IsReadOnly   = true,
+      Color        = { 0, 0, 0, 0 },
+      Font         = "Roboto",
+      FontSize     = 10,
+      TextColor    = theme.textPrimary,
+      StrokeWidth  = 0,
+      CornerRadius = 1,
+      HTextAlign   = "Left",
+      VTextAlign   = "Center",
+    }
+  end
+  screenText(lineX, line1, lineW, model, theme.textPrimary, true)
+  for i = 1, 4 do screenText(lineX, line1 + lineH * i, lineW, "---", theme.textMuted) end
+  local fwW = 44
+  screenBox("Device.Name",        lineX, line1 + lineH, lineW)
+  screenBox("Device.Description", lineX, line1 + lineH * 2, lineW)
+  screenBox("Device.IP Info",     lineX, line1 + lineH * 3, lineW)
+  screenBox("Device.Firmware",    lineX, line1 + lineH * 4, fwW)
+  screenBox("Device.MAC",         lineX + fwW + 4, line1 + lineH * 4, lineW - fwW - 4)
+
+  -- Screen rects snapped to whole pixels with a uniform pitch inside each
+  -- block of neighbouring ports (same row, regular spacing). Rounding each
+  -- port independently gave alternating 56/57 px gaps, visible as uneven
+  -- dark lines between the cards.
+  local screenRects = {}
+  do
+    local rowsByKey = { top = {}, bottom = {} }
+    for _, p in ipairs(coords.ports) do
+      local key = ((p.y + p.h / 2) < vbH / 2) and "top" or "bottom"
+      local list = rowsByKey[key]
+      list[#list + 1] = p
+    end
+    for _, list in pairs(rowsByKey) do
+      table.sort(list, function(a, b) return a.x < b.x end)
+      -- A block ends where the gap grows past the row's smallest pitch
+      -- (Araneo block gaps are only ~20% wider than the port pitch, e.g.
+      -- 18 vs 15 SVG units on the 30i) or the port kind changes.
+      local minGap = math.huge
+      for i = 2, #list do
+        local g = list[i].x - list[i - 1].x
+        if list[i].kind == list[i - 1].kind and g < minGap then minGap = g end
+      end
+      local blocks, cur = {}, nil
+      for i, p in ipairs(list) do
+        local prev = list[i - 1]
+        if prev and p.kind == prev.kind and (p.x - prev.x) <= minGap * 1.12 then
+          cur[#cur + 1] = p
+        else
+          cur = { p }
+          blocks[#blocks + 1] = cur
+        end
+      end
+      for _, blk in ipairs(blocks) do
+        local w  = math.floor(blk[1].w * sx + 0.5)
+        local h  = math.floor(blk[1].h * sy + 0.5)
+        local y  = math.floor(svgY + blk[1].y * sy + 0.5)
+        local x0 = math.floor(svgX + blk[1].x * sx + 0.5)
+        local pitch = 0
+        if #blk > 1 then
+          pitch = math.floor((blk[#blk].x - blk[1].x) * sx / (#blk - 1) + 0.5)
+        end
+        for i, p in ipairs(blk) do
+          screenRects[p.port] = { x = x0 + (i - 1) * pitch, y = y, w = w, h = h }
+        end
+      end
+    end
+  end
+
   -- Per-port interactive overlays
   for _, p in ipairs(coords.ports) do
-    local rect = svgToScreen(p, svgX, svgY, svgW, svgH, vbW, vbH)
+    local rect = screenRects[p.port] or svgToScreen(p, svgX, svgY, svgW, svgH, vbW, vbH)
     -- Grow each button by 1px each side so it hugs the SVG port outline
     -- without pushing past the rlinkx / cable-clip indicators.
     local bx = rect.x - 1
@@ -555,16 +807,23 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     local bw = rect.w + 2
     local bh = rect.h + 2
 
-    -- Group-color halo behind the port. Halo top/bottom are anchored to
-    -- chassis-relative y values (not port-relative) so all halos in a row
-    -- are the same height and aligned regardless of port kind (RJ45/SFP).
-    local isTopRow = (p.y < vbH / 2)
+    -- Group-color halo behind the port. Strategy:
+    --   • If the port is large enough to span both rows (e.g. 20t ethercons
+    --     occupy ~50% of chassis height), wrap a single halo around the
+    --     whole port from chassis-top to chassis-bottom (with edge gap).
+    --   • Otherwise, anchor halo top/bottom to row-relative y values so
+    --     same-row halos are uniform height and rows don't overlap.
     local bgPadX = 3
-    local edgeGapSvg  = 2    -- gap between halo outer edge and chassis edge
-    local innerGapSvg = 0.5  -- gap between top-row halo and bottom-row halo
-    local rowMidSvg = vbH / 2
+    local edgeGapSvg  = 2
+    local innerGapSvg = 0.5
+    local rowMidSvg   = vbH / 2
+    local portCenterY = p.y + p.h / 2
+    local portIsTall  = p.h > (vbH * 0.45)
     local haloTopSvg, haloBotSvg
-    if isTopRow then
+    if portIsTall then
+      haloTopSvg = edgeGapSvg
+      haloBotSvg = vbH - edgeGapSvg
+    elseif portCenterY < rowMidSvg then
       haloTopSvg = edgeGapSvg
       haloBotSvg = rowMidSvg - innerGapSvg
     else
@@ -607,6 +866,10 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
 
     -- Port.Link button. Color is painted at runtime to encode link speed
     -- (orange for 10/100 Mbps, green for 1Gbps+, dark for not connected).
+    -- Offline (never emulated) look follows Araneo's project mode: navy
+    -- body, thin cyan outline, port number inside. Runtime repaints Color
+    -- and OffColor with the link speed and blanks the Legend on disabled
+    -- ports.
     layout["Port.Link " .. p.port] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
@@ -614,26 +877,52 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       Position          = { bx, by },
       Size              = { bw, bh },
       IsReadOnly        = true,
-      Color             = LINK_ON,
-      OffColor          = LINK_OFF,
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 0,
+      Color             = theme.portOffFill,
+      OffColor          = theme.portOffFill,
+      StrokeColor       = theme.portOffStroke,
+      StrokeWidth       = 1,
       CornerRadius      = (p.kind == "ethercon") and math.floor(bw / 2) or 2,
+      Legend            = tostring(p.port),
+      Font              = "Roboto",
+      FontSize          = 11,
+      IsBold            = true,
+      TextColor         = theme.portText,
     }
 
-    -- PoE pip — positioned on the SVG's cable-clip rect (above top-row
-    -- ports, below bottom-row ports). Only RJ45/ethercon ports with PoE
-    -- support have p.poe coordinates; SFP ports get a hidden off-chassis
-    -- placement so the Button exists but isn't visible.
+    -- PoE pip — positioned on the SVG's cable-clip rect when one exists,
+    -- otherwise on a derived spot just above (top-row) or below (bottom-row)
+    -- the port. Ethercon ports usually have no SVG cable clip but still
+    -- need a pip location (the runtime picks color + visibility based on
+    -- /poe/ports/N state). SFP ports skip pip placement (no PoE support).
     local pipPos, pipSize
-    if p.poe then
-      local pipScreen = svgToScreen(p.poe, svgX, svgY, svgW, svgH, vbW, vbH)
-      pipPos  = { pipScreen.x, pipScreen.y }
-      pipSize = { pipScreen.w, pipScreen.h }
+    if p.kind == "sfp" then
+      pipPos, pipSize = { -100, -100 }, { 1, 1 }
     else
-      pipPos  = { -100, -100 }
-      pipSize = { 1, 1 }
+      local poeRect = p.poe
+      if not poeRect then
+        local pipW, pipH = 5, 5
+        local pipX = p.x + (p.w - pipW) / 2
+        local pipY
+        if (p.y + p.h / 2) < vbH / 2 then
+          pipY = p.y - pipH + 2  -- mostly above port, 2 SVG units overlap
+        else
+          pipY = p.y + p.h - 2
+        end
+        poeRect = { x = pipX, y = pipY, w = pipW, h = pipH }
+      end
+      -- Pip x follows the snapped port centre (same offset as in the SVG).
+      local pipScreen = svgToScreen(poeRect, svgX, svgY, svgW, svgH, vbW, vbH)
+      local pipW = math.floor(pipScreen.w + 0.5)
+      local pipH = math.floor(pipScreen.h + 0.5)
+      local offsetSvg = (poeRect.x + poeRect.w / 2) - (p.x + p.w / 2)
+      local pipX = math.floor(rect.x + rect.w / 2 + offsetSvg * sx - pipW / 2 + 0.5)
+      pipPos  = { pipX, math.floor(pipScreen.y + 0.5) }
+      pipSize = { pipW, pipH }
     end
+    -- Offline: PoE-capable ports show the grey "disabled" pip (Araneo
+    -- project mode); runtime repaints with the live PoE state.
+    local hasPoe = (p.kind ~= "sfp") and (p.port <= poePorts)
+    local pipOff = hasPoe and theme.poeDisabled or { 0, 0, 0, 0 }
     layout["Port.PoE Color " .. p.port] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
@@ -641,30 +930,11 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       Position          = pipPos,
       Size              = pipSize,
       IsReadOnly        = true,
-      Color             = { 0, 0, 0, 0 },
-      OffColor          = { 0, 0, 0, 0 },
+      Color             = pipOff,
+      OffColor          = pipOff,
       StrokeColor       = { 0, 0, 0, 0 },
       StrokeWidth       = 0,
       CornerRadius      = 1,
-    }
-
-    -- Port number — layout Text sorted last alphabetically so it renders on
-    -- top of halo + Port.Link. String value is set at runtime (layout-time
-    -- "String" isn't reliably applied, so renderPortUI writes it).
-    layout["Port.z Num " .. p.port] = {
-      Style       = "Text",
-      Position    = { bx, by },
-      Size        = { bw, bh },
-      Font        = "Roboto",
-      FontSize    = 11,
-      IsReadOnly  = true,
-      Color       = { 0, 0, 0, 0 },
-      TextColor   = { 220, 230, 250, 255 },
-      StrokeWidth = 0,
-      StrokeColor = { 0, 0, 0, 0 },
-      HTextAlign  = "Center",
-      VTextAlign  = "Center",
-      IsBold      = true,
     }
 
     -- Disabled-port red X marker. Runtime sets String="✕" when disabled.
@@ -684,34 +954,39 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       IsBold      = true,
     }
 
-    -- Trunk badge — top-left corner
+    -- Trunk badge — top-left corner of the group-color halo (inside the
+    -- halo's edge), so it visually "belongs" to the colored card.
+    local tbSize = 10
     layout["Port.Trunk Badge " .. p.port] = {
-      Style       = "Text",
-      Position    = { bx - 2, by - 4 },
-      Size        = { 12, 12 },
-      Font        = "Roboto",
-      FontSize    = 14,
-      IsReadOnly  = true,
-      Color       = { 0, 0, 0, 0 },
-      TextColor   = theme.trunkBadge,
-      StrokeWidth = 0,
-      HTextAlign  = "Left",
-      VTextAlign  = "Top",
-      IsBold      = true,
+      Style             = "Button",
+      ButtonStyle       = "Toggle",
+      ButtonVisualStyle = "Flat",
+      Position          = { bx - bgPadX, haloY },
+      Size              = { tbSize, tbSize },
+      IsReadOnly        = true,
+      Font              = "Roboto",
+      FontSize          = 10,
+      Legend            = "",
+      TextColor         = theme.trunkBadge,
+      Color             = { 0, 0, 0, 0 },
+      OffColor          = { 0, 0, 0, 0 },
+      StrokeColor       = { 0, 0, 0, 0 },
+      StrokeWidth       = 0,
+      CornerRadius      = 0,
     }
 
-    -- Multicast-router badge — top-right of port, hidden by default.
-    -- Layout uses transparent stroke so the border doesn't appear on every
-    -- port; runtime SetMrPorts paints Color, OffColor, StrokeColor and
-    -- Legend ("MR") only for ports in the IGMP snooping router list.
-    -- Named "Port.zMR " so it sorts after Port.PoE Color → renders on top.
-    local mrSize = 14
+    -- Multicast-router badge — sits ABOVE the port top edge, top-right.
+    -- Hidden by default (transparent Color/Stroke); runtime SetMrPorts
+    -- paints the white border, black fill, and "MR" legend for ports in
+    -- the IGMP snooping router list. Named "Port.zMR " so it sorts after
+    -- Port.PoE Color → renders on top.
+    local mrW, mrH = 16, 11
     layout["Port.zMR " .. p.port] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
       ButtonVisualStyle = "Flat",
-      Position          = { bx + bw - mrSize - 1, by + 1 },
-      Size              = { mrSize, mrSize },
+      Position          = { bx + bw - mrW + 3, by - 4 },
+      Size              = { mrW, mrH },
       IsReadOnly        = true,
       Font              = "Roboto",
       FontSize          = 8,
@@ -731,16 +1006,16 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
   -- number, legend TextBox, RLinkX toggle, PoE toggle, PoE bounce, speed combo.
   local labelW     = 16
   local enableW    = 20
-  local legendW    = 56
+  local legendW    = 50
   local rlinkxW    = 20
   local poeToggleW = 20
   local poeBounceW = 20
-  local groupW     = 78
-  local speedW     = 84
-  local colPad     = 4
-  local colW       = labelW + enableW + legendW + rlinkxW + poeToggleW + poeBounceW + groupW + speedW
+  local groupW     = 72
+  local speedW     = 110
+  local colPad     = GRID_COL_PAD
+  local colW       = GRID_COL_W
   local cellH      = 18
-  local xStart     = 12
+  local xStart     = GRID_X_START
   local cSpacing   = colW + colPad
 
   for p = 1, portCount do
@@ -846,7 +1121,7 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
 
     layout["Port.Group " .. p] = {
       Style             = "Button",
-      ButtonStyle       = "Toggle",
+      ButtonStyle       = "Momentary",
       ButtonVisualStyle = "Flat",
       Position          = { groupX, y },
       Size              = { groupW, cellH },
@@ -859,7 +1134,6 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       StrokeColor       = theme.cardStroke,
       StrokeWidth       = 1,
       CornerRadius      = 2,
-      IsReadOnly        = true,
     }
 
     layout["Port.Speed " .. p] = {
@@ -879,12 +1153,134 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
 
 end
 
+--------------------------------------------------------------------------------
+-- Groups and Trunks sections (groups | custom groups | trunks | custom
+-- trunks): a vertical card list per section that spills into sub-columns
+-- after groupsRowsForModel(model) items. Shared by the Groups and Trunks
+-- page and the main-page group picker. onSection(index, title, x, labelY,
+-- widthPx) fires once per section, onCard(kind, item, x, y) once per card
+-- (item = { slot, name, key } or { slot, placeholder = true } for a reserved
+-- custom slot the runtime fills later).
+--------------------------------------------------------------------------------
+local function walkGroupTrunkSections(model, originX, labelY, cardsY, onSection, onCard)
+  local rows = groupsRowsForModel(model)
+  local sections = {
+    { title = "Groups",        kind = "group", items = {} },
+    { title = "Custom groups", kind = "group", items = {} },
+    { title = "Trunks",        kind = "trunk", items = {} },
+    { title = "Custom trunks", kind = "trunk", items = {} },
+  }
+  for i = 1, 20 do
+    local name = state.groupNames[i] or (i == 1 and "Management" or ("Group " .. string.format("%02d", i)))
+    sections[1].items[i] = { slot = i, name = name, key = "Group: " .. i }
+  end
+  for i = 1, CUSTOM_GROUP_SLOTS do
+    sections[2].items[i] = { slot = 20 + i, placeholder = true }
+  end
+  sections[3].items[1] = { slot = 1, name = "ISL", key = "Trunk: 1" }
+  for i = 1, CUSTOM_TRUNK_SLOTS do
+    sections[4].items[i] = { slot = 1 + i, placeholder = true }
+  end
+
+  local cursorX = originX
+  for si, s in ipairs(sections) do
+    local subCols    = math.max(1, math.ceil(#s.items / rows))
+    local sectionWpx = subCols * GT_CARD_W + (subCols - 1) * 4
+    onSection(si, s.title, cursorX, labelY, sectionWpx)
+    for idx, item in ipairs(s.items) do
+      local subCol = math.floor((idx - 1) / rows)
+      local rowI   = (idx - 1) % rows
+      onCard(s.kind, item, cursorX + subCol * (GT_CARD_W + 4), cardsY + rowI * (GT_CARD_H + GT_GAP_Y))
+    end
+    cursorX = cursorX + sectionWpx + GT_SECTION_GAP
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Group picker panel (main page). A modal card over the chassis page that
+-- lists every group and trunk slot; the runtime paints and shows it when a
+-- Port.Group cell is clicked (openGroupPicker in info.lua) and hides it
+-- again after a pick. Every control is transparent at layout time (offline
+-- look) and IsInvisible from runtime start. The "zPicker" prefix sorts after
+-- every other main-page control so the panel renders on top of the grid.
+--------------------------------------------------------------------------------
+local PICKER_PAD, PICKER_TITLE_H, PICKER_BTN_W = 8, 20, 70
+
+local function buildGroupPickerPanel(layout, model, theme)
+  local rows   = groupsRowsForModel(model)
+  local pageW  = pageWidthForModel(model)
+  local panelW = groupsPageWidthForRows(rows) - 2 * GT_MARGIN_X + 2 * PICKER_PAD
+  local panelH = PICKER_PAD + PICKER_TITLE_H + 6 + GT_LABEL_H + 6
+               + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + PICKER_PAD
+  local panelX = math.floor((pageW - panelW) / 2 + 0.5)
+  local panelY = 10
+  local clear  = { 0, 0, 0, 0 }
+
+  local function pickerButton(name, x, y, w, h)
+    layout[name] = {
+      Style             = "Button",
+      ButtonStyle       = "Momentary",
+      ButtonVisualStyle = "Flat",
+      Position          = { x, y },
+      Size              = { w, h },
+      Font              = "Roboto",
+      FontSize          = 10,
+      Legend            = "",
+      TextColor         = { 255, 255, 255 },
+      Color             = clear,
+      OffColor          = clear,
+      StrokeColor       = clear,
+      StrokeWidth       = 0,
+      CornerRadius      = 3,
+      HTextAlign        = "Center",
+      VTextAlign        = "Center",
+    }
+  end
+  local function pickerText(name, x, y, w, h, textColor)
+    layout[name] = {
+      Style        = "Text",
+      Position     = { x, y },
+      Size         = { w, h },
+      Font         = "Roboto",
+      FontSize     = 11,
+      IsBold       = true,
+      HTextAlign   = "Left",
+      VTextAlign   = "Center",
+      TextColor    = textColor,
+      Color        = clear,
+      StrokeWidth  = 0,
+      IsReadOnly   = true,
+      String       = "",
+    }
+  end
+
+  pickerButton("zPicker.Bg", panelX, panelY, panelW, panelH)
+  layout["zPicker.Bg"].CornerRadius = 4
+
+  local titleY  = panelY + PICKER_PAD
+  local cancelX = panelX + panelW - PICKER_PAD - PICKER_BTN_W
+  local noneX   = cancelX - 6 - PICKER_BTN_W
+  pickerText("zPicker.Title", panelX + PICKER_PAD, titleY, noneX - 6 - (panelX + PICKER_PAD), PICKER_TITLE_H, theme.textPrimary)
+  pickerButton("zPicker.None",   noneX,   titleY, PICKER_BTN_W, PICKER_TITLE_H)
+  pickerButton("zPicker.Cancel", cancelX, titleY, PICKER_BTN_W, PICKER_TITLE_H)
+
+  local labelY = titleY + PICKER_TITLE_H + 6
+  walkGroupTrunkSections(model, panelX + PICKER_PAD, labelY, labelY + GT_LABEL_H + 6,
+    function(si, _title, x, y, w)
+      pickerText("zPicker.Label " .. si, x, y, w, GT_LABEL_H, theme.textMuted)
+    end,
+    function(kind, item, x, y)
+      pickerButton(((kind == "group") and "zPicker.Group " or "zPicker.Trunk ") .. item.slot, x, y, GT_CARD_W, GT_CARD_H)
+    end)
+end
+
 local function buildControlsPage(layout, gfx, model)
   local theme  = getThemeColors()
   local svg    = getChassisSvg(model)
   local coords = getPortCoords(model)
   if svg and coords then
     buildSvgOverlayPage(layout, gfx, model, theme, svg, coords)
+    buildGroupPickerPanel(layout, model, theme)
     return
   end
 
@@ -1115,8 +1511,11 @@ end
 --------------------------------------------------------------------------------
 local function buildConfigurationPage(layout, gfx, props)
   local theme  = getThemeColors()
-  local totalW = 1250
-  local totalH = 365
+  -- Match main-page height (computed in buildSvgOverlayPage); use
+  -- pageHeightForModel so tabs don't resize the window.
+  local model = resolveModel(props)
+  local totalW = pageWidthForModel(model)
+  local totalH = pageHeightForModel(model)
 
   gfx[#gfx+1] = {
     Type        = "Groupbox",
@@ -1272,7 +1671,8 @@ end
 local function buildGroupTrunkSettingsPage(layout, gfx, props)
   local theme = getThemeColors()
 
-  local pageW, pageH = 1250, 365
+  local model = resolveModel(props)
+  local pageW, pageH = pageWidthForModel(model), pageHeightForModel(model)
 
   gfx[#gfx+1] = {
     Type        = "Groupbox",
@@ -1285,32 +1685,26 @@ local function buildGroupTrunkSettingsPage(layout, gfx, props)
 
   defineCommonDeviceInfo(layout, gfx, theme, 0, 0)
 
-  local marginX  = 16
-  local cardW    = 110
-  local cardH    = 38
-  local gapX     = 8
-  local gapY     = 6
-  local sectionGap  = 14
-  local labelH   = 16
+  -- Compact 4-section layout (left→right): Predefined Groups | Custom
+  -- Groups | Predefined Trunks | Custom Trunks. Each section is a vertical
+  -- list of small cards that fits within the page's content height.
+  local marginX = GT_MARGIN_X
+  local topY    = GT_TOP_Y
+  local cardW   = GT_CARD_W
+  local cardH   = GT_CARD_H
+  local labelH  = GT_LABEL_H
 
   state.groupList    = state.groupList    or {}
   state.trunkList    = state.trunkList    or {}
   state.customColors = state.customColors or {}
   state.groupNames   = state.groupNames   or {}
 
-  -- Helper: resolve card color for a given memberOf key (live API first, fallback to predefined palette)
-  local function resolveColor(key)
-    local rgb = state.customColors[key] or GROUP_COLORS[key]
-    if rgb then return string.format("#%02X%02X%02X", rgb[1], rgb[2], rgb[3]) end
-    return "#2A3856"
-  end
-
-  local function sectionLabel(x, y, text)
+  local function sectionLabel(x, y, text, widthPx)
     gfx[#gfx+1] = {
       Type       = "Text",
       Text       = text,
       Position   = { x, y },
-      Size       = { pageW - marginX * 2, labelH },
+      Size       = { widthPx, labelH },
       Font       = "Roboto",
       FontSize   = 11,
       Color      = theme.textMuted,
@@ -1318,144 +1712,61 @@ local function buildGroupTrunkSettingsPage(layout, gfx, props)
       VTextAlign = "Center",
       IsBold     = true,
     }
-    -- Divider line under section label
     gfx[#gfx+1] = {
       Type        = "Rectangle",
       Position    = { x, y + labelH + 1 },
-      Size        = { pageW - marginX * 2, 1 },
+      Size        = { widthPx, 1 },
       Fill        = theme.cardStroke,
       StrokeWidth = 0,
     }
   end
 
-  -- Helper to place a single card (group or trunk)
-  local function placeCard(kind, slot, name, keyForColor, x, y, isTrunk)
-    local labelName   = (kind == "group") and ("group_label_" .. slot) or ("trunk_label_" .. slot)
-    local badgeName   = (kind == "group") and ("group_id_badge_" .. slot) or ("trunk_id_badge_" .. slot)
-
+  -- placeholder = reserved custom slot: invisible until the runtime fills it
+  -- (refreshCustomSlots in info.lua).
+  local function placeCard(kind, slot, name, keyForColor, x, y, isTrunk, placeholder)
+    local labelName = (kind == "group") and ("group_label_" .. slot) or ("trunk_label_" .. slot)
+    local badgeName = (kind == "group") and ("group_id_badge_" .. slot) or ("trunk_id_badge_" .. slot)
     layout[labelName] = {
-      Style           = "Text",
-      Position        = { x, y },
-      Size            = { cardW, cardH },
-      IsReadOnly      = true,
-      Multiline       = true,
-      FontSize        = 12,
-      Font            = "Roboto",
-      Color           = resolveColor(keyForColor),
-      TextColor       = { 255, 255, 255 },
-      StrokeWidth     = 0,
-      CornerRadius    = 6,
-      HTextAlign      = "Center",
-      VTextAlign      = "Center",
-      String          = name or "",
+      Style        = "Text",
+      Position     = { x, y },
+      Size         = { cardW, cardH },
+      IsReadOnly   = true,
+      FontSize     = 10,
+      Font         = "Roboto",
+      Color        = { 0, 0, 0, 0 },   -- transparent offline; runtime paints the group color
+      TextColor    = { 255, 255, 255 },
+      StrokeWidth  = 0,
+      CornerRadius = 3,
+      HTextAlign   = "Center",
+      VTextAlign   = "Center",
+      String       = name or "",
     }
-
-    -- Trunk indicator overlay (top-left corner triangle) — static gfx glyph
-    if isTrunk then
-      gfx[#gfx+1] = {
-        Type       = "Text",
-        Text       = "◤",
-        Position   = { x + 1, y - 2 },
-        Size       = { 14, 14 },
-        Font       = "Roboto",
-        FontSize   = 16,
-        Color      = theme.trunkBadge,
-        HTextAlign = "Left",
-        VTextAlign = "Top",
-        IsBold     = true,
-      }
-    end
-
-    -- ID badge in top-right corner of card
     layout[badgeName] = {
       Style        = "Text",
-      Position     = { x + cardW - 18, y + 2 },
-      Size         = { 16, 11 },
-      FontSize     = 8,
+      Position     = { x + cardW - 14, y + 2 },
+      Size         = { 12, 9 },
+      FontSize     = 7,
       Font         = "Roboto",
       TextColor    = { 255, 255, 255 },
-      Color        = { 0, 0, 0, 140 },
+      Color        = { 0, 0, 0, 0 },   -- transparent offline; runtime paints it
       CornerRadius = 2,
       StrokeWidth  = 0,
       IsReadOnly   = true,
       HTextAlign   = "Center",
       VTextAlign   = "Center",
-      String       = tostring(slot),
+      String       = placeholder and "" or tostring(slot),
     }
   end
 
-  local cursorY = 55
-
-  ------------------------------------------------------------------------------
-  -- Predefined Groups (ids 1..20, 5 per row)
-  ------------------------------------------------------------------------------
-  sectionLabel(marginX, cursorY, "Predefined Groups")
-  cursorY = cursorY + labelH + 6
-
-  local cols = 5
-  for i = 1, 20 do
-    local col = (i - 1) % cols
-    local row = math.floor((i - 1) / cols)
-    local x = marginX + col * (cardW + gapX)
-    local y = cursorY + row * (cardH + gapY)
-    local name = state.groupNames[i] or (i == 1 and "Management" or ("Group " .. string.format("%02d", i)))
-    placeCard("group", i, name, "Group: " .. i, x, y, false)
-  end
-  cursorY = cursorY + 4 * (cardH + gapY) + sectionGap
-
-  ------------------------------------------------------------------------------
-  -- Custom Groups
-  ------------------------------------------------------------------------------
-  sectionLabel(marginX, cursorY, "Custom Groups")
-  cursorY = cursorY + labelH + 6
-
-  local customCol = 0
-  for _, g in ipairs(state.groupList) do
-    if not g.predefined and g.id and g.id > 20 then
-      local x = marginX + customCol * (cardW + gapX)
-      local y = cursorY
-      placeCard("group", g.id, g.name, "Group: " .. g.id, x, y, false)
-      customCol = customCol + 1
-    end
-  end
-  cursorY = cursorY + cardH + sectionGap
-
-  ------------------------------------------------------------------------------
-  -- Predefined Trunks
-  ------------------------------------------------------------------------------
-  sectionLabel(marginX, cursorY, "Predefined Trunks")
-  cursorY = cursorY + labelH + 6
-
-  local predTrunkCol = 0
-  for _, t in ipairs(state.trunkList) do
-    if t.predefined and t.id then
-      local x = marginX + predTrunkCol * (cardW + gapX)
-      local y = cursorY
-      placeCard("trunk", t.id, t.name, "Trunk: " .. t.id, x, y, true)
-      predTrunkCol = predTrunkCol + 1
-    end
-  end
-  -- Fallback when fetch hasn't run — show ISL placeholder so page isn't empty
-  if predTrunkCol == 0 then
-    placeCard("trunk", 1, "ISL", "Trunk: 1", marginX, cursorY, true)
-  end
-  cursorY = cursorY + cardH + sectionGap
-
-  ------------------------------------------------------------------------------
-  -- Custom Trunks
-  ------------------------------------------------------------------------------
-  sectionLabel(marginX, cursorY, "Custom Trunks")
-  cursorY = cursorY + labelH + 6
-
-  local custTrunkCol = 0
-  for _, t in ipairs(state.trunkList) do
-    if not t.predefined and t.id then
-      local x = marginX + custTrunkCol * (cardW + gapX)
-      local y = cursorY
-      placeCard("trunk", t.id, t.name, "Trunk: " .. t.id, x, y, true)
-      custTrunkCol = custTrunkCol + 1
-    end
-  end
+  -- Fixed sections (walkGroupTrunkSections): groups 1..20 and the ISL
+  -- trunk always exist; custom groups/trunks only exist on the switch, so
+  -- the layout reserves invisible slots (group_label_21.., trunk_label_2..)
+  -- that the runtime fills in id order.
+  walkGroupTrunkSections(model, marginX, topY, topY + labelH + 6,
+    function(_si, title, x, y, w) sectionLabel(x, y, title, w) end,
+    function(kind, item, x, y)
+      placeCard(kind, item.slot, item.name, item.key, x, y, kind == "trunk", item.placeholder)
+    end)
 end
 
 --------------------------------------------------------------------------------
@@ -1496,10 +1807,24 @@ end
 -- category with "." (e.g. "PoE.Toggle 1"), so we just swap "." → "~" and
 -- assign as PrettyName. Keeps Name unchanged (stable pin ID) while the
 -- display in Q-SYS Designer nests into folders: PoE > Toggle 1, etc.
+--
+-- Designer's hover tooltip shows the PrettyName. Controls that expose no pin
+-- get an empty PrettyName, which shrinks the tooltip to an empty bubble (it
+-- cannot be removed from plugin code). Pinned controls keep the "~" tree name.
+local noPin = {}
+for _, ctl in ipairs(GetControls(props)) do
+  if ctl.UserPin == false and (ctl.PinStyle == nil or ctl.PinStyle == "None") then
+    noPin[ctl.Name] = true
+  end
+end
 for key, entry in pairs(layout) do
   if type(key) == "string" and type(entry) == "table" and entry.PrettyName == nil then
-    local pretty = key:gsub("%.", "~")
-    if pretty ~= key then entry.PrettyName = pretty end
+    if noPin[key] then
+      entry.PrettyName = ""
+    else
+      local pretty = key:gsub("%.", "~")
+      if pretty ~= key then entry.PrettyName = pretty end
+    end
   end
 end
 

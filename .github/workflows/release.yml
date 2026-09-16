@@ -18,10 +18,10 @@ jobs:
       - name: Prepare asset filename
         run: |
           TAG="${GITHUB_REF_NAME}"
-          cp "Luminex Gigacore.qplug" "Luminex_Gigacore_${TAG}.qplug"
+          cp "gigacore-q-sys-plugin.qplug" "Luminex_GigaCore_${TAG}.qplug"
 
       - name: Create GitHub Release and upload asset
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            Luminex_Gigacore_${{ github.ref_name }}.qplug
+            Luminex_GigaCore_${{ github.ref_name }}.qplug

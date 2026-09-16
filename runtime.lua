@@ -1,5 +1,8 @@
 local pc = state.portCount or 30
 
+-- Theme mirrored from the Dark Mode property (see controls.lua).
+state.darkMode = not (Controls["Theme"] and Controls["Theme"].String == "light")
+
 --------------------------------------------------------------------------------
 -- Speed dropdown choices (API values — translated back to friendly labels
 -- for display by SetPortSpeed via SPEED_UI_MAP)
@@ -24,18 +27,24 @@ end
 --------------------------------------------------------------------------------
 -- IP / connect / identify
 --------------------------------------------------------------------------------
+local function connectToSwitch()
+  updateAuthStatus("")
+  state.baseIP = Controls["Auth.IP Address"].String
+  openWS(state.baseIP)
+end
+
+-- Enter in the IP box connects, same as the Connect button.
 if Controls["Auth.IP Address"] then
   Controls["Auth.IP Address"].EventHandler = function(txt)
     state.baseIP = txt.String
+    if txt.String ~= "" then connectToSwitch() end
   end
 end
 
 if Controls["Auth.Connect"] then
   Controls["Auth.Connect"].EventHandler = function(btn)
     if btn.Boolean then
-      updateAuthStatus("")
-      state.baseIP = Controls["Auth.IP Address"].String
-      openWS(state.baseIP)
+      connectToSwitch()
       btn.Boolean = false
     end
   end
@@ -52,7 +61,7 @@ if Controls["Auth.Identify"] then
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_body, _status, _err) end,
+        EventHandler = function(_tbl, _status, _body, _err) end,
       }
       btn.Boolean = false
     end
@@ -75,7 +84,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_body, code, _err)
+        EventHandler = function(_tbl, code, _body, _err)
           log("Port " .. p .. " enable set to " .. tostring(newState) .. " | HTTP " .. tostring(code))
         end,
       }
@@ -99,7 +108,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_body, code, _err)
+        EventHandler = function(_tbl, code, _body, _err)
           log("PoE " .. p .. " enabled set to " .. tostring(newState) .. " | HTTP " .. tostring(code))
         end,
       }
@@ -126,7 +135,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_, code, _err)
+        EventHandler = function(_tbl, code, _body, _err)
           log("PoE bounce port " .. port .. " off | HTTP " .. tostring(code))
         end,
       }
@@ -140,7 +149,7 @@ for p = 1, pc do
             { ["Content-Type"] = "application/json" },
             getAuthHeaders()
           ),
-          EventHandler = function(_, code, _err)
+          EventHandler = function(_tbl, code, _body, _err)
             log("PoE bounce port " .. port .. " on | HTTP " .. tostring(code))
           end,
         }
@@ -165,7 +174,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_body, _status, _err) end,
+        EventHandler = function(_tbl, _status, _body, _err) end,
       }
     end
   end
@@ -187,7 +196,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_body, _status, _err)
+        EventHandler = function(_tbl, _status, _body, _err)
           log("RLinkX PUT port " .. p .. " => " .. tostring(enabled))
         end,
       }
@@ -215,7 +224,7 @@ for p = 1, pc do
             { ["Content-Type"] = "application/json" },
             getAuthHeaders()
           ),
-          EventHandler = function(_, status, err)
+          EventHandler = function(_tbl, status, _body, err)
             log("Disabled port " .. port ..
                 " => status: " .. tostring(status) ..
                 ", err: " .. tostring(err))
@@ -233,7 +242,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_, status, err)
+        EventHandler = function(_tbl, status, _body, err)
           log("Enabled port " .. port ..
               " => status: " .. tostring(status) ..
               ", err: " .. tostring(err))
@@ -260,7 +269,7 @@ for p = 1, pc do
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
         ),
-        EventHandler = function(_, status, err)
+        EventHandler = function(_tbl, status, _body, err)
           log("Set link_speed on port " .. port ..
               " => " .. qsc_json.encode(payload) ..
               " | status: " .. tostring(status) ..
@@ -294,7 +303,7 @@ local function identifyDevice()
       { ["Content-Type"] = "application/json" },
       getAuthHeaders()
     ),
-    EventHandler = function(_b, status, err)
+    EventHandler = function(_tbl, status, _b, err)
       log("Identify device => status: " .. tostring(status) .. ", err: " .. tostring(err))
     end,
   }
@@ -311,7 +320,7 @@ local function identifyPort(port)
       { ["Content-Type"] = "application/json" },
       getAuthHeaders()
     ),
-    EventHandler = function(_b, status, err)
+    EventHandler = function(_tbl, status, _b, err)
       log("Identify port " .. port .. " => status: " .. tostring(status) .. ", err: " .. tostring(err))
     end,
   }
@@ -329,6 +338,57 @@ for p = 1, pc do
   if b then
     b.EventHandler = function(c)
       if c.Boolean then identifyPort(p) end
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Group picker (main page): a Port.Group cell opens it, an item PUTs the
+-- new membership, Cancel or the backdrop closes it.
+--------------------------------------------------------------------------------
+closeGroupPicker()
+
+for p = 1, pc do
+  local cell = Controls["Port.Group " .. p]
+  if cell then
+    cell.EventHandler = function(c)
+      if c.Boolean then openGroupPicker(p) end
+    end
+  end
+end
+
+for slot = 1, 20 + CUSTOM_GROUP_SLOTS do
+  local b = Controls["zPicker.Group " .. slot]
+  if b then
+    b.EventHandler = function(c)
+      local id = state.pickerSlotGroupId and state.pickerSlotGroupId[slot]
+      if c.Boolean and id then pickerAssign("group", id) end
+    end
+  end
+end
+
+for slot = 1, 1 + CUSTOM_TRUNK_SLOTS do
+  local b = Controls["zPicker.Trunk " .. slot]
+  if b then
+    b.EventHandler = function(c)
+      local id = state.pickerSlotTrunkId and state.pickerSlotTrunkId[slot]
+      if c.Boolean and id then pickerAssign("trunk", id) end
+    end
+  end
+end
+
+local noneBtn = Controls["zPicker.None"]
+if noneBtn then
+  noneBtn.EventHandler = function(c)
+    if c.Boolean then pickerAssign("none") end
+  end
+end
+
+for _, name in ipairs({ "zPicker.Cancel", "zPicker.Bg" }) do
+  local b = Controls[name]
+  if b then
+    b.EventHandler = function(c)
+      if c.Boolean then closeGroupPicker() end
     end
   end
 end
