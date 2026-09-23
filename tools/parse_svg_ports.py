@@ -400,7 +400,10 @@ def parse_model(model, fname):
         p["x"] -= crop
         if "poe" in p:
             p["poe"]["x"] -= crop
-    svg_src = open(os.path.join(ASSETS, fname), "rb").read().decode("utf-8")
+    svg_src = open(os.path.join(ASSETS, fname), "rb").read().decode("utf-8").replace("\r\n", "\n")
+    # Drop the model name: the display block shows it, and Designer lacks
+    # its font (HandelGotD), so the wider fallback ran into the crop margin.
+    svg_src = re.sub(r"\s*<text\b.*?</text>", "", svg_src, flags=re.S)
     svg_src = re.sub(r'viewBox="[^"]*"', f'viewBox="{crop:.3f} 0 {vb_w - crop:.3f} {vb_h}"', svg_src, count=1)
     svg_src = re.sub(r'\swidth="[^"]*"', "", svg_src, count=1)
     svg_src = re.sub(r'\sheight="[^"]*"', "", svg_src, count=1)

@@ -137,16 +137,19 @@ for p = 1, portCount do
     TextBoxType = "ComboBox",
     PinStyle    = "Input",
     UserPin     = true,
-    Choices     = {
-      "Auto",
-      "Disabled",
-      "1 Gbps",
-      "100 Mbps (Full-duplex)",
-      "100 Mbps (Half-duplex)",
-      "10 Mbps (Full-duplex)",
-      "10 Mbps (Half-duplex)",
-    },
-    Value = "Auto",
+    Choices     = SPEED_CHOICES,
+    Value       = "Auto",
+  }
+
+  -- Speed cell — Button showing the current link speed; click opens the
+  -- speed picker panel (zSpeed.* controls below). The Port.Speed pin above
+  -- stays the external interface and is no longer placed in the layout.
+  c[#c+1] = {
+    Name        = "Port.Speed Cell " .. p,
+    ControlType = "Button",
+    ButtonType  = "Momentary",
+    PinStyle    = "None",
+    UserPin     = false,
   }
 
   -- Port group membership cell — Button colored with the group's color,
@@ -196,8 +199,8 @@ for p = 1, portCount do
     Value       = "",
   }
 
-  -- Trunk corner marker: a flat Button whose centered Legend is the "◤"
-  -- glyph (predictable placement, unlike a Text box's padding).
+  -- Trunk corner marker: a flat Button whose Legend carries an IconData
+  -- triangle filling the box (a "◤" glyph sat off the corner).
   c[#c+1] = {
     Name        = "Port.Trunk Badge " .. p,
     ControlType = "Button",
@@ -254,35 +257,6 @@ for p = 1, portCount do
   }
 end
 
--- Design-time properties are not readable at runtime, so the ones the
--- runtime needs are mirrored into hidden read-only text controls whose
--- initial Value comes from props.
-local function propValue(name, default)
-  local p = props and props[name]
-  local v = (type(p) == "table") and p.Value or p
-  return v or default
-end
-
-c[#c+1] = {
-  Name        = "Theme",
-  ControlType = "Text",
-  TextBoxType = "ReadOnly",
-  PinStyle    = "None",
-  UserPin     = false,
-  IsReadOnly  = true,
-  Value       = (propValue("Dark Mode", "Yes") == "No") and "light" or "dark",
-}
-
-c[#c+1] = {
-  Name        = "Poll Interval",
-  ControlType = "Text",
-  TextBoxType = "ReadOnly",
-  PinStyle    = "None",
-  UserPin     = false,
-  IsReadOnly  = true,
-  Value       = propValue("Poll Interval", "15 s"),
-}
-
 -- Group picker panel (main page). Hidden until a Port.Group cell is clicked;
 -- items mirror the Groups and Trunks page slots: zPicker.Group 1..20
 -- predefined, 21.. custom slots, zPicker.Trunk 1 = ISL, 2.. custom slots.
@@ -313,6 +287,13 @@ pickerButton("zPicker.Cancel")
 for i = 1, 4 do pickerText("zPicker.Label " .. i) end
 for i = 1, 20 + CUSTOM_GROUP_SLOTS do pickerButton("zPicker.Group " .. i) end
 for i = 1, 1 + CUSTOM_TRUNK_SLOTS do pickerButton("zPicker.Trunk " .. i) end
+
+-- Speed picker panel (main page). Hidden until a Port.Speed Cell is clicked;
+-- zSpeed.Item i shows SPEED_CHOICES[i].
+pickerButton("zSpeed.Bg")
+pickerText("zSpeed.Title")
+pickerButton("zSpeed.Cancel")
+for i = 1, #SPEED_CHOICES do pickerButton("zSpeed.Item " .. i) end
 
 -- Logo identify button — invisible Button overlay on the Luminex logo
 -- inside the chassis. Click PUTs /api/identify on the device.
@@ -380,6 +361,17 @@ c[#c+1] = {
   UserPin     = true,
   Value       = "",
   MultiLine   = true,
+}
+
+-- Switch model from /api/device; "Switch is <model>" when it differs from
+-- the Model property.
+c[#c+1] = {
+  Name        = "Device.Model",
+  ControlType = "Text",
+  TextBoxType = "ReadOnly",
+  PinStyle    = "Output",
+  UserPin     = true,
+  Value       = "",
 }
 
 c[#c+1] = {
@@ -495,20 +487,32 @@ c[#c+1] = { Name = "PSU.2 Power",    ControlType = "Text", TextBoxType = "ReadOn
 c[#c+1] = { Name = "System.CPU Load 1s",   ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
 c[#c+1] = { Name = "System.CPU Load 10s",  ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
 
+c[#c+1] = { Name = "Power.Total Usage", ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
+c[#c+1] = { Name = "Power.Coupling",    ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
+
 -- RSTP
 c[#c+1] = { Name = "RSTP.Bridge Priority", ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
 c[#c+1] = { Name = "RSTP.Root Bridge",     ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "Output", UserPin = true, Value = "" }
 
--- MR (multicast router) marker per port — drives the badge in layout. Internal only.
+-- Status block paint targets (right of the chassis, like the switch web UI):
+-- PSU icons, coupling glyph, status dot. Internal only, laid out as Buttons.
+for _, name in ipairs({ "PSU.1 Icon", "PSU.2 Icon", "Power.Coupling Glyph", "Device.Status Dot" }) do
+  c[#c+1] = { Name = name, ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "None", UserPin = false, Value = "" }
+end
+
+-- MR (multicast router) and RSTP root-port markers per port — drive the
+-- badges in layout. Internal only.
 for p = 1, portCount do
-  c[#c+1] = {
-    Name        = "Port.zMR " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    Value       = "",
-  }
+  for _, prefix in ipairs({ "Port.zMR ", "Port.zRoot " }) do
+    c[#c+1] = {
+      Name        = prefix .. p,
+      ControlType = "Text",
+      TextBoxType = "ReadOnly",
+      PinStyle    = "None",
+      UserPin     = false,
+      Value       = "",
+    }
+  end
 end
 
 -- Testing page (disabled but control kept so page can be re-enabled without recompile)

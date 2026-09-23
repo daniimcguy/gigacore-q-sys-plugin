@@ -58,8 +58,13 @@ Summary of renames (old → new):
   (4 states), RLinkX border ring (disabled / enabled / active), top-left trunk
   triangle, group/trunk color fills with live custom colors fetched from
   `/api/groups` and `/api/trunks`.
-- Port settings: legend textbox and speed dropdown now themed (no more
-  black-on-black in dark mode, no stray white background on the dropdown).
+- Port settings: legend textbox themed (no more black-on-black in dark mode).
+  The speed dropdown is replaced by a speed picker panel (click the speed
+  cell): the native dropdown list was unreadable in dark mode. The panel only
+  offers what the port can do (copper tops out at 1 Gbps, SFP offers 10 Gbps
+  only with the 10g licence active); a speed the switch rejects flashes
+  "Rejected" on the cell and the API reason goes to the debug log. The
+  `Port Speed <N>` pin is unchanged and still accepts the same labels.
 - New **PoE Bounce** button next to PoE toggle (disables 3s, re-enables).
 
 ### Groups and Trunks tab

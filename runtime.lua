@@ -1,28 +1,6 @@
 local pc = state.portCount or 30
 
--- Theme mirrored from the Dark Mode property (see controls.lua).
-state.darkMode = not (Controls["Theme"] and Controls["Theme"].String == "light")
-
---------------------------------------------------------------------------------
--- Speed dropdown choices (API values — translated back to friendly labels
--- for display by SetPortSpeed via SPEED_UI_MAP)
---------------------------------------------------------------------------------
-for p = 1, pc do
-  local ctrl = Controls["Port.Speed " .. p]
-  if ctrl then
-    ctrl.Choices = {
-      "Auto",
-      "Disabled",
-      "10gbps fdx",
-      "2.5gbps fdx",
-      "1gbps fdx",
-      "100mbps fdx",
-      "100mbps hdx",
-      "10mbps fdx",
-      "10mbps hdx",
-    }
-  end
-end
+state.darkMode = Properties["Dark Mode"].Value ~= "No"
 
 --------------------------------------------------------------------------------
 -- IP / connect / identify
@@ -169,7 +147,7 @@ for p = 1, pc do
       HttpClient.Upload {
         Url     = string.format("http://%s/api/ports/port/%d/legend", state.baseIP, p),
         Method  = "PUT",
-        Data    = qsc_json.encode(newVal),
+        Data    = jsonString(newVal),
         Headers = MergeTables(
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
@@ -191,7 +169,7 @@ for p = 1, pc do
       HttpClient.Upload {
         Url     = string.format("http://%s/api/ports/port/%d/rlinkx", state.baseIP, p),
         Method  = "PUT",
-        Data    = qsc_json.encode({ enabled = enabled }),
+        Data    = '{"enabled":' .. tostring(enabled) .. '}',
         Headers = MergeTables(
           { ["Content-Type"] = "application/json" },
           getAuthHeaders()
@@ -205,87 +183,21 @@ for p = 1, pc do
 end
 
 --------------------------------------------------------------------------------
--- Speed dropdown (with pending state + REST rollback; WS confirms success)
+-- Speed: the Port.Speed pin (external writes, UI label or API token) and the
+-- grid cell that opens the speed picker. Both end in applyPortSpeed.
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local dropdown = Controls["Port.Speed " .. p]
-  if dropdown then
-    dropdown.EventHandler = function(ctrl)
-      local val    = ctrl.String
-      local port   = p
-      local pstate = getPortState(port)
-
-      if val == "Disabled" then
-        HttpClient.Upload {
-          Url     = string.format("http://%s/api/ports/port/%d/enabled", state.baseIP, port),
-          Method  = "PUT",
-          Data    = "false",
-          Headers = MergeTables(
-            { ["Content-Type"] = "application/json" },
-            getAuthHeaders()
-          ),
-          EventHandler = function(_tbl, status, _body, err)
-            log("Disabled port " .. port ..
-                " => status: " .. tostring(status) ..
-                ", err: " .. tostring(err))
-          end,
-        }
-        return
-      end
-
-      -- Ensure port is enabled before setting speed
-      HttpClient.Upload {
-        Url     = string.format("http://%s/api/ports/port/%d/enabled", state.baseIP, port),
-        Method  = "PUT",
-        Data    = "true",
-        Headers = MergeTables(
-          { ["Content-Type"] = "application/json" },
-          getAuthHeaders()
-        ),
-        EventHandler = function(_tbl, status, _body, err)
-          log("Enabled port " .. port ..
-              " => status: " .. tostring(status) ..
-              ", err: " .. tostring(err))
-        end,
-      }
-
-      pstate.speedPending = true
-      renderPortUI(port)
-
-      local payload
-      if val == "Auto" then
-        payload = { mode = "auto", speed = { "all" } }
-      elseif val == "1gbps fdx" then
-        payload = { mode = "auto", speed = { "1gbps fdx" } }
-      else
-        payload = { mode = "fixed", speed = { val } }
-      end
-
-      HttpClient.Upload {
-        Url     = string.format("http://%s/api/ports/port/%d/link_speed", state.baseIP, port),
-        Method  = "PUT",
-        Data    = qsc_json.encode(payload),
-        Headers = MergeTables(
-          { ["Content-Type"] = "application/json" },
-          getAuthHeaders()
-        ),
-        EventHandler = function(_tbl, status, _body, err)
-          log("Set link_speed on port " .. port ..
-              " => " .. qsc_json.encode(payload) ..
-              " | status: " .. tostring(status) ..
-              ", err: " .. tostring(err))
-
-          if status ~= 200 then
-            log("Link speed rejected on port " .. port)
-            pstate.speedPending = false
-            if pstate.lastValidSpeed then
-              pstate.speed = pstate.lastValidSpeed
-            end
-            renderPortUI(port)
-          end
-          -- On success WS confirms via SetPortSpeed()
-        end,
-      }
+  local pin = Controls["Port.Speed " .. p]
+  if pin then
+    pin.EventHandler = function(ctrl)
+      local val = ctrl.String
+      applyPortSpeed(p, SPEED_UI_MAP[val] or val)
+    end
+  end
+  local cell = Controls["Port.Speed Cell " .. p]
+  if cell then
+    cell.EventHandler = function(c)
+      if c.Boolean then openSpeedPicker(p) end
     end
   end
 end
@@ -347,6 +259,7 @@ end
 -- new membership, Cancel or the backdrop closes it.
 --------------------------------------------------------------------------------
 closeGroupPicker()
+closeSpeedPicker()
 
 for p = 1, pc do
   local cell = Controls["Port.Group " .. p]
@@ -389,6 +302,27 @@ for _, name in ipairs({ "zPicker.Cancel", "zPicker.Bg" }) do
   if b then
     b.EventHandler = function(c)
       if c.Boolean then closeGroupPicker() end
+    end
+  end
+end
+
+for i, label in ipairs(SPEED_CHOICES) do
+  local b = Controls["zSpeed.Item " .. i]
+  if b then
+    b.EventHandler = function(c)
+      if not c.Boolean then return end
+      local port = state.speedPickerPort
+      closeSpeedPicker()
+      if port then applyPortSpeed(port, label) end
+    end
+  end
+end
+
+for _, name in ipairs({ "zSpeed.Cancel", "zSpeed.Bg" }) do
+  local b = Controls[name]
+  if b then
+    b.EventHandler = function(c)
+      if c.Boolean then closeSpeedPicker() end
     end
   end
 end

@@ -30,26 +30,29 @@ local LogoLuminex = "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLSB
 -- GigaCore as its actual product-chassis artwork.
 --------------------------------------------------------------------------------
 
-local LogoPSU = "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB3aWR0aD0iOS45NzI2NTYybW0iCiAgIGhlaWdodD0iOS45NjY3OTY5bW0iCiAgIHZpZXdCb3g9IjAgMCA5Ljk3MjY1NjIgOS45NjY3OTY5IgogICB2ZXJzaW9uPSIxLjEiCiAgIGlkPSJzdmc1IgogICB4bWw6c3BhY2U9InByZXNlcnZlIgogICB4bWxuczppbmtzY2FwZT0iaHR0cDovL3d3dy5pbmtzY2FwZS5vcmcvbmFtZXNwYWNlcy9pbmtzY2FwZSIKICAgeG1sbnM6c29kaXBvZGk9Imh0dHA6Ly9zb2RpcG9kaS5zb3VyY2Vmb3JnZS5uZXQvRFREL3NvZGlwb2RpLTAuZHRkIgogICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxzb2RpcG9kaTpuYW1lZHZpZXcKICAgICBpZD0ibmFtZWR2aWV3NyIKICAgICBwYWdlY29sb3I9IiNmZmZmZmYiCiAgICAgYm9yZGVyY29sb3I9IiMwMDAwMDAiCiAgICAgYm9yZGVyb3BhY2l0eT0iMC4yNSIKICAgICBpbmtzY2FwZTpzaG93cGFnZXNoYWRvdz0iMiIKICAgICBpbmtzY2FwZTpwYWdlb3BhY2l0eT0iMC4wIgogICAgIGlua3NjYXBlOnBhZ2VjaGVja2VyYm9hcmQ9IjAiCiAgICAgaW5rc2NhcGU6ZGVza2NvbG9yPSIjZDFkMWQxIgogICAgIGlua3NjYXBlOmRvY3VtZW50LXVuaXRzPSJtbSIKICAgICBzaG93Z3JpZD0iZmFsc2UiIC8+PGRlZnMKICAgICBpZD0iZGVmczIiPjxjbGlwUGF0aAogICAgICAgY2xpcFBhdGhVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICAgICBpZD0iY2xpcFBhdGgxMTQwOSI+PGcKICAgICAgICAgaWQ9ImcxMTQxMyIKICAgICAgICAgdHJhbnNmb3JtPSJtYXRyaXgoMi42OTUzNzYyLDAsMCwtMi42OTY5ODA4LC0xNTE2Ljk4ODMsNzQ3Ljg0MjA2KSI+PHBhdGgKICAgICAgICAgICBkPSJNIDE3My4xMTg5MSwtNDcuNDE2ODg5IEggMTIyNC43ODg4IFYgMTAwMy42MjczIEggMTczLjExODkxIFoiCiAgICAgICAgICAgaWQ9InBhdGgxMTQxMSIKICAgICAgICAgICBzdHlsZT0ic3Ryb2tlLXdpZHRoOjAuMzcwODk1IiAvPjwvZz48L2NsaXBQYXRoPjxjbGlwUGF0aAogICAgICAgY2xpcFBhdGhVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICAgICBpZD0iY2xpcFBhdGgxMTQxNSI+PGcKICAgICAgICAgaWQ9ImcxMTQxOSIKICAgICAgICAgdHJhbnNmb3JtPSJtYXRyaXgoMi42OTUzNzYyLDAsMCwtMi42OTY5ODA4LC0xNTI0Ljc2MTIsNzM2LjA4MTc3KSI+PHBhdGgKICAgICAgICAgICBkPSJNIDE3My4xMTg5MSwtNDcuNDE2ODg5IEggMTIyNC43ODg4IFYgMTAwMy42MjczIEggMTczLjExODkxIFoiCiAgICAgICAgICAgaWQ9InBhdGgxMTQxNyIKICAgICAgICAgICBzdHlsZT0ic3Ryb2tlLXdpZHRoOjAuMzcwODk1IiAvPjwvZz48L2NsaXBQYXRoPjwvZGVmcz48ZwogICAgIGlua3NjYXBlOmxhYmVsPSJMYXllciAxIgogICAgIGlua3NjYXBlOmdyb3VwbW9kZT0ibGF5ZXIiCiAgICAgaWQ9ImxheWVyMSIKICAgICBzb2RpcG9kaTppbnNlbnNpdGl2ZT0idHJ1ZSIKICAgICB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtNTU2Ljk2OTEzLC0yNzIuOTI4MDYpIj48cGF0aAogICAgICAgZD0iTSAyNDkuNzM1ODMsOTMxLjIxNTAyIEggMTI0OS43MzU0IFYgLTY4Ljc4NDcxMSBIIDI0OS43MzU4MyBaIgogICAgICAgc3R5bGU9ImZpbGw6IzIzMWYyMDtmaWxsLW9wYWNpdHk6MTtmaWxsLXJ1bGU6bm9uemVybztzdHJva2U6bm9uZTtzdHJva2Utd2lkdGg6MC4zNTI3NzgiCiAgICAgICBpZD0icGF0aDEwNTkiIC8+PC9nPjxnCiAgICAgaW5rc2NhcGU6Z3JvdXBtb2RlPSJsYXllciIKICAgICBpZD0ibGF5ZXIyIgogICAgIGlua3NjYXBlOmxhYmVsPSJMYXllciAyIgogICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC01NTYuOTY5MTMsLTI3Mi45MjgwNikiPjxnCiAgICAgICBpZD0iZzEzMDEiCiAgICAgICB0cmFuc2Zvcm09Im1hdHJpeCgwLjM3MTAwNTczLDAsMCwtMC4zNzA3ODQ5OSw1NjUuNjk1MTQsMjcyLjkyODA3KSIKICAgICAgIGNsaXAtcGF0aD0idXJsKCNjbGlwUGF0aDExNDE1KSIKICAgICAgIGlua3NjYXBlOmV4cG9ydC1maWxlbmFtZT0iUFNVX0ljb25wbmcuc3ZnIgogICAgICAgaW5rc2NhcGU6ZXhwb3J0LXhkcGk9Ijk2IgogICAgICAgaW5rc2NhcGU6ZXhwb3J0LXlkcGk9Ijk2Ij48cGF0aAogICAgICAgICBkPSJtIDAsMCBoIC0yMC4xNiBjIC0xLjg1NCwtMC4wMDYgLTMuMzU0LC0xLjUwNiAtMy4zNiwtMy4zNiB2IC0xNS4xMiBjIDAuMDA2LC0xLjg1NCAxLjUwNiwtMy4zNTQgMy4zNiwtMy4zNiBoIDUuMDQgdiAzLjM2IGggLTUuMDQgdiAxNS4xMiBoIDEuNjggViAtOC40IGggMy4zNiB2IDUuMDQgaCAzLjM2IFYgLTguNCBoIDMuMzYgdiA1LjA0IGggMy4zNiBWIC04LjQgaCAzLjM2IHYgNS4wNCBIIDAgdiAtMTUuMTIgaCAtNS4wNCB2IC0zLjM2IEggMCBjIDEuODU0LDAuMDA2IDMuMzU0LDEuNTA2IDMuMzYsMy4zNiBWIC0zLjM2IEMgMy4zNTQsLTEuNTA2IDEuODU0LC0wLjAwNiAwLDAiCiAgICAgICAgIHN0eWxlPSJmaWxsOiNmZmZmZmY7ZmlsbC1vcGFjaXR5OjE7ZmlsbC1ydWxlOm5vbnplcm87c3Ryb2tlOm5vbmUiCiAgICAgICAgIGlkPSJwYXRoMTMwMyIgLz48L2c+PGcKICAgICAgIGlkPSJnMTMwNSIKICAgICAgIHRyYW5zZm9ybT0ibWF0cml4KDAuMzcxMDA1NzMsMCwwLC0wLjM3MDc4NDk5LDU2Mi44MTEzNSwyNzcuMjg4NjEpIgogICAgICAgY2xpcC1wYXRoPSJ1cmwoI2NsaXBQYXRoMTE0MDkpIj48cGF0aAogICAgICAgICBkPSJtIDAsMCBoIC00LjMzMiBsIC0yLjczNCwtNi43MiBoIDMuNDQ0IGwgLTIuOTI4LC04LjQgOC4xOTQsMTEuNzYgaCAtMy41NTIgeiIKICAgICAgICAgc3R5bGU9ImZpbGw6I2ZmZmZmZjtmaWxsLW9wYWNpdHk6MTtmaWxsLXJ1bGU6bm9uemVybztzdHJva2U6bm9uZSIKICAgICAgICAgaWQ9InBhdGgxMzA3IiAvPjwvZz48L2c+PC9zdmc+Cg=="
+local LogoPSU = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5Ljk3MjcgOS45NjY4Ij48ZyB0cmFuc2Zvcm09Im1hdHJpeCgwLjM3MTAwNTczLDAsMCwtMC4zNzA3ODQ5OSw4LjcyNjAxLDApIj48cGF0aCBmaWxsPSIjNUE2NDc4IiBkPSJtIDAsMCBoIC0yMC4xNiBjIC0xLjg1NCwtMC4wMDYgLTMuMzU0LC0xLjUwNiAtMy4zNiwtMy4zNiB2IC0xNS4xMiBjIDAuMDA2LC0xLjg1NCAxLjUwNiwtMy4zNTQgMy4zNiwtMy4zNiBoIDUuMDQgdiAzLjM2IGggLTUuMDQgdiAxNS4xMiBoIDEuNjggViAtOC40IGggMy4zNiB2IDUuMDQgaCAzLjM2IFYgLTguNCBoIDMuMzYgdiA1LjA0IGggMy4zNiBWIC04LjQgaCAzLjM2IHYgNS4wNCBIIDAgdiAtMTUuMTIgaCAtNS4wNCB2IC0zLjM2IEggMCBjIDEuODU0LDAuMDA2IDMuMzU0LDEuNTA2IDMuMzYsMy4zNiBWIC0zLjM2IEMgMy4zNTQsLTEuNTA2IDEuODU0LC0wLjAwNiAwLDAiLz48L2c+PGcgdHJhbnNmb3JtPSJtYXRyaXgoMC4zNzEwMDU3MywwLDAsLTAuMzcwNzg0OTksNS44NDIyMiw0LjM2MDU1KSI+PHBhdGggZmlsbD0iIzVBNjQ3OCIgZD0ibSAwLDAgaCAtNC4zMzIgbCAtMi43MzQsLTYuNzIgaCAzLjQ0NCBsIC0yLjkyOCwtOC40IDguMTk0LDExLjc2IGggLTMuNTUyIHoiLz48L2c+PC9zdmc+"
 
 --------------------------------------------------------------------------------
 -- Static Tables / Lookups
 --------------------------------------------------------------------------------
 -- Per-model port type breakdown. Ports are assumed to be numbered
--- sequentially: ethercon → rj45 → sfp. `poe` = number of PoE-capable
--- ports counted from port 1 (drives the grey PoE pips shown offline).
+-- sequentially: ethercon → rj45 → sfp. `poe` = number of ports, counted from
+-- port 1, that carry PoE on a PoE unit (licence on the 30i, PoE hardware
+-- variant on the others); it drives the grey PoE pips shown offline. Counts
+-- from /api/poe/ports of units in the field (2026-11-05); the S30-I
+-- was never seen and assumes the 30i's 1-24.
 PORT_LAYOUT = {
   ["GigaCore 30i"]    = { ethercon = 0,  rj45 = 24, sfp = 6,  poe = 24 },
-  ["GigaCore S30-I"]  = { ethercon = 0,  rj45 = 24, sfp = 6,  poe = 0  },
+  ["GigaCore S30-I"]  = { ethercon = 0,  rj45 = 24, sfp = 6,  poe = 24 },
   ["GigaCore O26-I"]  = { ethercon = 0,  rj45 = 0,  sfp = 26, poe = 0  }, -- 2 QSFP + 4 SFP28 + 20 SFP+
   ["GigaCore 20t"]    = { ethercon = 8,  rj45 = 8,  sfp = 4,  poe = 16 },
   ["GigaCore 18t"]    = { ethercon = 8,  rj45 = 8,  sfp = 2,  poe = 16 },
   ["GigaCore 16t"]    = { ethercon = 8,  rj45 = 8,  sfp = 0,  poe = 16 },
-  ["GigaCore 16tf"]   = { ethercon = 12, rj45 = 0,  sfp = 4,  poe = 16 },
-  ["GigaCore 16i"]    = { ethercon = 0,  rj45 = 12, sfp = 4,  poe = 0  },
-  ["GigaCore 10t"]    = { ethercon = 8,  rj45 = 0,  sfp = 2,  poe = 8  },
+  ["GigaCore 16tf"]   = { ethercon = 12, rj45 = 0,  sfp = 4,  poe = 12 }, -- 13-16: API type sfp, no PoE
+  ["GigaCore 16i"]    = { ethercon = 0,  rj45 = 12, sfp = 4,  poe = 12 },
+  ["GigaCore 10t"]    = { ethercon = 8,  rj45 = 0,  sfp = 2,  poe = 8  }, -- 9-10: API type sfp, no PoE
   ["GigaCore 10t-IP"] = { ethercon = 8,  rj45 = 0,  sfp = 2,  poe = 8  }, -- 9-10 are rear ethercons, no PoE
-  ["GigaCore 10i"]    = { ethercon = 0,  rj45 = 8,  sfp = 2,  poe = 0  },
+  ["GigaCore 10i"]    = { ethercon = 0,  rj45 = 8,  sfp = 2,  poe = 8  },
 }
 
 -- Groups and Trunks page: predefined groups 1..20 and trunk 1 (ISL) always
@@ -153,7 +156,6 @@ SPEED_CHOICES = {
   "Auto",
   "Disabled",
   "10 Gbps",
-  "2.5 Gbps",
   "1 Gbps",
   "100 Mbps (Full-duplex)",
   "100 Mbps (Half-duplex)",
@@ -161,9 +163,22 @@ SPEED_CHOICES = {
   "10 Mbps (Half-duplex)",
 }
 
+-- Copper (rj45) ports top out at 1 Gbps; SFP ports offer 10 Gbps only when
+-- the "10g" licence is active (see speedChoicesForPort).
+SPEED_CHOICES_COPPER = {
+  "Auto",
+  "Disabled",
+  "1 Gbps",
+  "100 Mbps (Full-duplex)",
+  "100 Mbps (Half-duplex)",
+  "10 Mbps (Full-duplex)",
+  "10 Mbps (Half-duplex)",
+}
+SPEED_CHOICES_SFP_10G = { "Auto", "Disabled", "10 Gbps", "1 Gbps" }
+SPEED_CHOICES_SFP_1G  = { "Auto", "Disabled", "1 Gbps" }
+
 SPEED_API_MAP = {
   ["10 Gbps"]                = "10gbps fdx",
-  ["2.5 Gbps"]               = "2.5gbps fdx",
   ["1 Gbps"]                 = "1gbps fdx",
   ["100 Mbps (Full-duplex)"] = "100mbps fdx",
   ["100 Mbps (Half-duplex)"] = "100mbps hdx",
@@ -173,7 +188,6 @@ SPEED_API_MAP = {
 
 SPEED_UI_MAP = {
   ["10gbps fdx"]  = "10 Gbps",
-  ["2.5gbps fdx"] = "2.5 Gbps",
   ["1gbps fdx"]   = "1 Gbps",
   ["100mbps fdx"] = "100 Mbps (Full-duplex)",
   ["100mbps hdx"] = "100 Mbps (Half-duplex)",
@@ -184,6 +198,20 @@ SPEED_UI_MAP = {
 --------------------------------------------------------------------------------
 -- Utility / Logging
 --------------------------------------------------------------------------------
+-- JSON string literal for a Lua string (quotes, backslashes and control
+-- characters escaped). The REST PUT bodies are built by hand; see runtime.lua.
+function jsonString(s)
+  local escaped = tostring(s):gsub('[%c"\\]', function(ch)
+    if ch == '"' then return '\\"' end
+    if ch == "\\" then return "\\\\" end
+    if ch == "\n" then return "\\n" end
+    if ch == "\r" then return "\\r" end
+    if ch == "\t" then return "\\t" end
+    return string.format("\\u%04x", ch:byte())
+  end)
+  return '"' .. escaped .. '"'
+end
+
 function log(m)
   print(tostring(m))
 end
@@ -388,6 +416,24 @@ function getThemeColors()
 end
 
 --------------------------------------------------------------------------------
+-- Trunk badge: a 6 px triangle filling its button's inner box, drawn as
+-- Legend IconData (the PSU icon mechanism). A "◤" glyph sat ~3 px off the
+-- halo corner because of the font's side bearings. The top-left corner
+-- follows the halo's CornerRadius 3 so the triangle hugs the rounded card
+-- corner (viewBox units = screen pixels).
+--------------------------------------------------------------------------------
+local trunkBadgeLegends = {}
+
+function trunkBadgeLegend(color)
+  if not trunkBadgeLegends[color] then
+    local svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 6 6\"><path fill=\"" .. color
+      .. "\" d=\"M0,3C0,1.343 1.343,0 3,0H6L0,6Z\"/></svg>"
+    trunkBadgeLegends[color] = '{"DrawChrome":false,"IconData":"' .. Crypto.Base64Encode(svg) .. '","Legend":""}'
+  end
+  return trunkBadgeLegends[color]
+end
+
+--------------------------------------------------------------------------------
 -- Port UI Renderer (UI ONLY)
 --------------------------------------------------------------------------------
 function renderPortUI(port)
@@ -473,10 +519,10 @@ function renderPortUI(port)
   end
 
 
-  -- Trunk badge: show "◤" only when the port belongs to a trunk
+  -- Trunk badge: corner triangle only when the port belongs to a trunk
   local trunkBadge = Controls["Port.Trunk Badge " .. port]
   if trunkBadge then
-    trunkBadge.Legend = isTrunk and "◤" or ""
+    trunkBadge.Legend = isTrunk and trunkBadgeLegend(rgbHex(theme.trunkBadge)) or ""
   end
 
   local poeLabel = Controls["PoE.Indication " .. port]
@@ -484,7 +530,10 @@ function renderPortUI(port)
     poeLabel.String = p.poe or ""
   end
 
-  local poeKey = (p.poe or ""):lower()
+  -- Without the PoE licence ("poe" missing from the /api/features active
+  -- list) no pip and no toggle state, whatever /api/poe/ports reports.
+  local poeLicensed = state.hasPoe ~= false
+  local poeKey = poeLicensed and (p.poe or ""):lower() or ""
   local poeColorMap = {
     sourcing = theme.poeSourcing,
     enabled  = theme.poeEnabled,
@@ -506,10 +555,10 @@ function renderPortUI(port)
 
   local poeToggle = Controls["PoE.Toggle " .. port]
   if poeToggle then
-    poeToggle.Boolean = (p.poeEnabled == true)
+    poeToggle.Boolean = poeLicensed and (p.poeEnabled == true)
     local c = poeColorMap[poeKey]
     poeToggle.Color  = c and rgbHex(c) or "#00000000"
-    poeToggle.Legend = (p.poe == "sourcing") and "⚡" or ""
+    poeToggle.Legend = (poeKey == "sourcing") and "⚡" or ""
   end
 
   -- RLinkX bar (visible indicator near bottom of port): cyan when enabled,
@@ -571,6 +620,15 @@ function renderPortUI(port)
   local speedCtrl = Controls["Port.Speed " .. port]
   if speedCtrl and p.speed then
     speedCtrl.String = p.speed
+  end
+  -- "Disabled" is a picker choice, not an API speed: a disabled port shows
+  -- it here while p.speed keeps the real link_speed for when it comes back.
+  local speedCell = Controls["Port.Speed Cell " .. port]
+  if speedCell then
+    local hex = rgbHex(theme.buttonOffColor)
+    speedCell.Legend = (p.enabled == false) and "Disabled" or tostring(p.speed or "")
+    speedCell.Color  = hex
+    pcall(function() speedCell.OffColor = hex end)
   end
 end
 
@@ -644,9 +702,15 @@ function subscribeAllSystem()
     state.ws:Write(string.format('{"subscription":{"path":"/power/psus/%s/power_status","action":"add","method":"changes"}}', name))
     state.ws:Write(string.format('{"subscription":{"path":"/power/psus/%s/power_usage","action":"add","method":"changes"}}', name))
   end
+  state.ws:Write('{"subscription":{"path":"/power/coupling/mode","action":"add","method":"changes"}}')
+  state.ws:Write('{"subscription":{"path":"/power/coupling/state","action":"add","method":"changes"}}')
+  state.ws:Write('{"subscription":{"path":"/power/total_power_usage","action":"add","method":"changes"}}')
 
   -- Spanning tree (default MST instance 0)
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/bridge_priority","action":"add","method":"changes"}}')
+  for i = 1, state.portCount do
+    state.ws:Write(string.format('{"subscription":{"path":"/spanning_tree/mst/0/ports/%d/role","action":"add","method":"changes"}}', i))
+  end
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/root_bridge_address","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/root_bridge_priority","action":"add","method":"changes"}}')
 
@@ -670,12 +734,44 @@ function subscribeAllGroups()
 end
 
 --------------------------------------------------------------------------------
--- Initial PoE enabled state sync (REST snapshot)
+-- Model detection (REST snapshot)
 --------------------------------------------------------------------------------
--- One-shot REST snapshot of /api/device to pick up the model name (used by
--- Auto-detect Model). When the reported name matches a known GigaCoreModels
--- key, we stash it in state.detectedModel and trigger a layout rebuild so
--- the chassis page reflects the right port count + ethercon styling.
+-- The read-only "model" of /api/device has no space ("GigaCore30i") where the
+-- plugin's model names have one ("GigaCore 30i"): compare lowercase letters
+-- and digits only. ("name" is the user-set device name.)
+local function modelKey(s)
+  return (s:lower():gsub("[^%w]", ""))
+end
+
+function matchModel(raw)
+  local wanted = modelKey(raw)
+  for name, _ in pairs(GigaCoreModels) do
+    if modelKey(name) == wanted then return name end
+  end
+  return nil
+end
+
+-- Device.Model flashes like the Offline badge while the Model property and
+-- the switch disagree. One timer, reused across WebSocket reconnects.
+local function startModelPulse(ctrl)
+  local bright = true
+  pcall(function() ctrl.Color = "#C80000" end)
+  state.modelPulseTimer = state.modelPulseTimer or Timer.New()
+  state.modelPulseTimer.EventHandler = function()
+    bright = not bright
+    pcall(function() ctrl.Color = bright and "#C80000" or "#800000" end)
+  end
+  state.modelPulseTimer:Start(0.5)
+end
+
+local function stopModelPulse()
+  if state.modelPulseTimer then state.modelPulseTimer:Stop() end
+end
+
+-- One-shot GET /api/device at connect. Device.Model shows the switch's model,
+-- flashing red when the Model property names another one: the chassis layout
+-- is frozen at design time, so the user has to pick the right model in the
+-- plugin properties.
 function fetchDeviceInfo()
   HttpClient.Get {
     Url     = string.format("http://%s/api/device", state.baseIP),
@@ -685,21 +781,23 @@ function fetchDeviceInfo()
     ),
     EventHandler = function(_tbl, code, body, _err)
       if code ~= 200 or not body then return end
-      local name = body:match('"name"%s*:%s*"([^"]+)"')
-      if not name or not GigaCoreModels[name] then return end
-      state.detectedModel = name
-      log("Device model detected => " .. name)
-      -- Warn if the user's selected Model doesn't match the switch's report.
-      -- Q-SYS plugin layout can't auto-rebuild from runtime so we can only
-      -- log the mismatch and rely on the user to correct the Property.
-      local cfg = state.selectedModel
-      if cfg and cfg ~= name then
-        log("WARNING: Model property is set to '" .. cfg ..
-            "' but the switch reports '" .. name ..
-            "'. Pick the correct model in plugin properties to fix the chassis layout.")
-        local ds = Controls["Device.Status"]
-        if ds then ds.String = "Model mismatch: switch is " .. name end
+      local raw = body:match('"model"%s*:%s*"([^"]+)"')
+      if not raw then return end
+      local name = matchModel(raw)
+      local selected = Properties["Model"].Value
+      local ctrl = Controls["Device.Model"]
+      if name == selected then
+        stopModelPulse()
+        log("Device model detected => " .. name)
+        ctrl.String = name
+        paintHeaderBox(ctrl)
+        return
       end
+      log("WARNING: Model property is set to '" .. selected ..
+          "' but the switch reports '" .. raw ..
+          "'. Pick the correct model in plugin properties to fix the chassis layout.")
+      ctrl.String = "Switch is " .. (name or raw)
+      startModelPulse(ctrl)
     end,
   }
 end
@@ -781,6 +879,9 @@ local function applyPortObject(elem)
   local top, nested = splitNested(elem)
   local port = tonumber(top:match('"port_number"%s*:%s*(%d+)'))
   if not port or port > (state.portCount or 0) then return end
+
+  local ptype = top:match('"type"%s*:%s*"(%w+)"')
+  if ptype then getPortState(port).portType = ptype end
 
   local enabled = top:match('"enabled"%s*:%s*(%a+)')
   if enabled then SetPortEnabled(port, enabled == "true") end
@@ -872,25 +973,134 @@ function syncPoePorts()
   }
 end
 
+-- /api/features: "10g" in the active list means the 10 G licence is on,
+-- which decides whether SFP ports may be set to 10 Gbps. "poe" in the
+-- active list is the PoE licence ("supported" only says it can be bought);
+-- without it renderPortUI shows no PoE pip or toggle state.
+function syncFeatures()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/features", state.baseIP),
+    Headers = MergeTables(
+      { ["Content-Type"] = "application/json" },
+      getAuthHeaders()
+    ),
+    Timeout = 10,
+    EventHandler = function(_tbl, code, body, err)
+      log("GET /api/features => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      local active = body:match('"active"%s*:%s*(%b[])') or ""
+      state.has10g = active:find('"10g"', 1, true) ~= nil
+      local hadPoe = state.hasPoe
+      state.hasPoe = active:find('"poe"', 1, true) ~= nil
+      if state.hasPoe ~= hadPoe then
+        for port = 1, (state.portCount or 0) do renderPortUI(port) end
+      end
+    end,
+  }
+end
+
 function reconcileAll()
   log("reconcileAll: ws=" .. tostring(state.ws ~= nil) .. " ip=" .. tostring(state.baseIP))
   if not state.ws or state.baseIP == "" then return end
   syncAllPorts()
+  syncFeatures()
   syncPoePorts()
   syncRlinkxState()
   fetchCustomColors()
+  syncPowerStatus()
+  syncSpanningTree()
 end
 
--- Poll Interval property, mirrored into a hidden control (see controls.lua).
+--------------------------------------------------------------------------------
+-- Status block snapshots (REST). The WebSocket only reports changes, so a
+-- PSU state or root bridge that never changes after connect would otherwise
+-- stay blank; these GETs feed the same setters as the WS handlers.
+--------------------------------------------------------------------------------
+-- /api/power: {"total_power_usage":N,"coupling":{"mode":..,"state":..},
+--   "psus":[{"name":"psu1",...,"power_usage":N,...,"state":"good",...},...]}
+function syncPowerStatus()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/power", state.baseIP),
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    Timeout = 10,
+    EventHandler = function(_tbl, code, body, err)
+      log("GET /api/power => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      local total = body:match('"total_power_usage"%s*:%s*(%d+)')
+      if total then SetTotalPower(total) end
+      -- psus[] lists only the powered sources: a slot missing from it is
+      -- painted "absent", and fewer sources than max_num_psus marks the
+      -- single-PSU install that refreshCoupling does not flag.
+      local psus = body:match('"psus"%s*:%s*(%b[])') or "[]"
+      local maxPsus = tonumber(body:match('"max_num_psus"%s*:%s*(%d+)'))
+      local count, seen = 0, {}
+      for obj in psus:gmatch("%b{}") do
+        count = count + 1
+        local id = tonumber(obj:match('"name"%s*:%s*"psu(%d+)"'))
+        if id then
+          seen[id] = true
+          -- "fans":[{...,"state":..}] nests its own "state"; strip nested
+          -- arrays and objects before matching the top-level scalars.
+          local flat = obj:gsub("%b[]", "[]")
+          local usage = flat:match('"power_usage"%s*:%s*(%d+)')
+          local pstat = flat:match('"state"%s*:%s*"([^"]+)"')
+          if pstat then SetPsuStatus(id, pstat) end
+          if usage then SetPsuPower(id, usage) end
+        end
+      end
+      for id = 1, 2 do
+        if not seen[id] then SetPsuStatus(id, "absent") end
+      end
+      state.psuMissing = maxPsus ~= nil and count < maxPsus
+      local coupling = body:match('"coupling"%s*:%s*(%b{})')
+      if coupling then
+        local mode  = coupling:match('"mode"%s*:%s*"([^"]+)"')
+        local cstat = coupling:match('"state"%s*:%s*"([^"]+)"')
+        if cstat then SetCouplingState(cstat) end
+        if mode  then SetPowerCoupling(mode) end
+      end
+    end,
+  }
+end
+
+-- /api/spanning_tree/mst/0: bridge_priority, bridge_address,
+-- root_bridge_address, root_bridge_priority (+ a "ports" array we skip).
+function syncSpanningTree()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/spanning_tree/mst/0", state.baseIP),
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    Timeout = 10,
+    EventHandler = function(_tbl, code, body, err)
+      log("GET /api/spanning_tree/mst/0 => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      local flat = body:gsub("%b[]", "[]")
+      local pri      = flat:match('"bridge_priority"%s*:%s*(%d+)')
+      local addr     = flat:match('"bridge_address"%s*:%s*"([^"]+)"')
+      local rootAddr = flat:match('"root_bridge_address"%s*:%s*"([^"]+)"')
+      local rootPri  = flat:match('"root_bridge_priority"%s*:%s*(%d+)')
+      if pri      then SetBridgePriority(pri) end
+      if addr     then SetBridgeAddress(addr) end
+      if rootPri  then SetRootBridgePriority(rootPri) end
+      if rootAddr then SetRootBridgeAddress(rootAddr) end
+      local ports = body:match('"ports"%s*:%s*(%b[])')
+      if not ports then return end
+      for obj in ports:gmatch("%b{}") do
+        local n    = obj:match('"port_number"%s*:%s*(%d+)')
+        local role = obj:match('"role"%s*:%s*"([^"]+)"')
+        if n and role then SetPortRstpRole(tonumber(n), role) end
+      end
+    end,
+  }
+end
+
 function pollIntervalSeconds()
-  local ctrl = Controls["Poll Interval"]
-  local txt = ctrl and ctrl.String or "15 s"
-  return tonumber(txt:match("(%d+)")) or 0   -- "Off" => 0
+  return tonumber(Properties["Poll Interval"].Value:match("(%d+)")) or 0   -- "Off" => 0
 end
 
 function startPollTimer()
   stopPollTimer()
   local secs = pollIntervalSeconds()
+  log("poll interval: " .. secs .. " s")
   if secs <= 0 then return end
   state.pollTimer = Timer.New()
   state.pollTimer.EventHandler = function() reconcileAll() end
@@ -1419,19 +1629,17 @@ function handlePortPath(path, raw)
   end
 
   if path:find("/link_speed") then
-    local mode  = raw:match('"mode"%s*:%s*"([^"]+)"')
-    local speed = raw:match('"speed"%s*:%s*%[%"([^"]+)"%]')
-
-    if mode == "auto" then
-      if speed == "all" or not speed then
-        SetPortSpeed(port, "Auto")
-      else
-        SetPortSpeed(port, speed)
-      end
-    elseif mode == "fixed" and speed then
-      SetPortSpeed(port, speed)
+    -- new_value is {"mode":..,"speed":[..]}, {"speed":[..]} when only the
+    -- speed changed, or a bare [..] on the /link_speed/speed sub-path. The
+    -- displayed label depends on the speed alone ("all" = Auto); a /mode
+    -- notification without a speed changes nothing.
+    local speed = raw:match('"speed"%s*:%s*%[%s*"([^"]+)"')
+    if not speed and path:find("/link_speed/speed$") then
+      speed = raw:match('"new_value"%s*:%s*%[%s*"([^"]+)"')
     end
-
+    if speed then
+      SetPortSpeed(port, (speed == "all") and "Auto" or speed)
+    end
     return true
   end
 
@@ -1515,32 +1723,95 @@ function SetCpuTemp(v)
 end
 
 function SetFanSpeed(id, v)
-  setCtrlString("fan" .. id .. "_speed", string.format("Fan %d: %s rpm", id, tostring(v)))
+  setCtrlString("Fan." .. id .. " Speed", string.format("%s rpm", tostring(v)))
+end
+
+-- Badge background for a health state string as the API reports it
+-- (good / warning / absent / anything else = error).
+local function healthColor(status)
+  local theme = getThemeColors()
+  if status == "good" or status == "ok" or status == "redundant" then
+    return rgbHex(theme.badgeOkBg)
+  elseif status == "warning" then
+    return rgbHex(theme.badgeWarnBg)
+  elseif status == "absent" or status == "" then
+    return rgbHex(theme.badgeOffBg)
+  end
+  return rgbHex(theme.badgeErrBg)
+end
+
+local function milliwattsText(milliwatts)
+  local watts = tonumber(milliwatts)
+  if not watts then return nil end
+  return string.format("%.1f W", watts / 1000)
+end
+
+-- PSU icon tinted by state, as the switch web UI draws it. The color lives
+-- in the SVG itself, pushed through the Button Legend as EzSVG does
+-- ({DrawChrome=false, IconData=<base64 svg>}). Same paths as LogoPSU (the
+-- grey offline placeholder drawn under the control), no background, no
+-- clip-path: Designer rendered the Inkscape export's clipped paths as a
+-- plain dark square, and runtime StrokeColor writes never showed.
+local PSU_ICON_COLORS = {
+  good = "#00C800", ok = "#00C800", redundant = "#00C800",
+  warning = "#E6B400", absent = "#5A6478", [""] = "#5A6478",
+}
+
+local function psuIconSvg(color)
+  return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 9.9727 9.9668\"><g transform=\"matrix(0.37100573,0,0,-0.37078499,8.72601,0)\"><path fill=\"" .. color .. "\" d=\"m 0,0 h -20.16 c -1.854,-0.006 -3.354,-1.506 -3.36,-3.36 v -15.12 c 0.006,-1.854 1.506,-3.354 3.36,-3.36 h 5.04 v 3.36 h -5.04 v 15.12 h 1.68 V -8.4 h 3.36 v 5.04 h 3.36 V -8.4 h 3.36 v 5.04 h 3.36 V -8.4 h 3.36 v 5.04 H 0 v -15.12 h -5.04 v -3.36 H 0 c 1.854,0.006 3.354,1.506 3.36,3.36 V -3.36 C 3.354,-1.506 1.854,-0.006 0,0\"/></g><g transform=\"matrix(0.37100573,0,0,-0.37078499,5.84222,4.36055)\"><path fill=\"" .. color .. "\" d=\"m 0,0 h -4.332 l -2.734,-6.72 h 3.444 l -2.928,-8.4 8.194,11.76 h -3.552 z\"/></g></svg>"
 end
 
 function SetPsuStatus(id, status)
-  local theme = getThemeColors()
-  local bg
-  if status == "good" or status == "ok" or status == "redundant" then
-    bg = theme.badgeOkBg
-  elseif status == "warning" then
-    bg = theme.badgeWarnBg
-  elseif status == "absent" or status == "" then
-    bg = theme.badgeOffBg
-  else
-    bg = theme.badgeErrBg
-  end
-  setCtrlString("psu" .. id .. "_status", "PSU" .. id)
-  setCtrlColor("psu" .. id .. "_status", rgbHex(bg))
+  setCtrlString("PSU." .. id .. " Status", status)
+  local icon = Controls["PSU." .. id .. " Icon"]
+  if not icon then return end
+  local svg = psuIconSvg(PSU_ICON_COLORS[status] or "#DC2828")
+  icon.Legend = '{"DrawChrome":false,"IconData":"' .. Crypto.Base64Encode(svg) .. '","Legend":""}'
 end
 
 function SetPsuPower(id, milliwatts)
-  local watts = tonumber(milliwatts)
-  if watts then
-    -- API returns milliwatts
-    watts = watts / 1000
-    setCtrlString("psu" .. id .. "_power", string.format("%.1f W", watts))
+  local text = milliwattsText(milliwatts)
+  if text then setCtrlString("PSU." .. id .. " Power", text) end
+end
+
+function SetTotalPower(milliwatts)
+  local text = milliwattsText(milliwatts)
+  if text then setCtrlString("Power.Total Usage", text) end
+end
+
+-- Coupling indicator between the two PSU icons, as the switch web UI draws
+-- it: "▼▲" in redundant mode, "⊕" in shared mode. The glyph sits on the
+-- screen background while the coupling state is good and takes the warning
+-- or error badge color otherwise. With a PSU slot empty (state.psuMissing,
+-- from /api/power) the switch reports "No redundancy because only 1 PSU is
+-- powered" as a coupling warning; the plugin leaves that one unpainted.
+state.couplingMode  = state.couplingMode  or ""
+state.couplingState = state.couplingState or "good"
+state.psuMissing    = state.psuMissing    or false
+
+local function refreshCoupling()
+  local glyph = ""
+  if state.couplingMode == "redundant" then glyph = "▼▲"
+  elseif state.couplingMode == "shared" then glyph = "⊕"
   end
+  local c = Controls["Power.Coupling Glyph"]
+  if not c then return end
+  c.Legend = glyph
+  local color = "#00000000"
+  if state.couplingState ~= "good" and not state.psuMissing then color = healthColor(state.couplingState) end
+  c.Color = color
+  pcall(function() c.OffColor = color end)
+end
+
+function SetPowerCoupling(mode)
+  state.couplingMode = mode or ""
+  setCtrlString("Power.Coupling", state.couplingMode)
+  refreshCoupling()
+end
+
+function SetCouplingState(status)
+  state.couplingState = status or "good"
+  refreshCoupling()
 end
 
 function SetCpuLoad1s(v)
@@ -1552,18 +1823,31 @@ function SetCpuLoad10s(v)
 end
 
 function SetBridgePriority(v)
-  setCtrlString("RSTP.Bridge Priority", string.format("Bridge priority: %s", tostring(v)))
+  setCtrlString("RSTP.Bridge Priority", tostring(v))
+  paintHeaderBox(Controls["RSTP.Bridge Priority"])
 end
 
+state.bridgeAddr     = state.bridgeAddr     or ""
 state.rootBridgeAddr = state.rootBridgeAddr or ""
 state.rootBridgePri  = state.rootBridgePri  or ""
 
+-- "this switch" when the root bridge address is our own bridge address
+-- (REST-only field, never changes), otherwise "<mac> (<priority>)".
 local function refreshRootBridge()
-  if state.rootBridgeAddr ~= "" or state.rootBridgePri ~= "" then
+  if state.rootBridgeAddr == "" and state.rootBridgePri == "" then return end
+  if state.bridgeAddr ~= "" and state.rootBridgeAddr == state.bridgeAddr then
+    setCtrlString("RSTP.Root Bridge", "this switch")
+  else
     local addr = state.rootBridgeAddr ~= "" and state.rootBridgeAddr or "??"
     local pri  = state.rootBridgePri  ~= "" and state.rootBridgePri  or "?"
-    setCtrlString("RSTP.Root Bridge", string.format("Root bridge: %s (priority: %s)", addr, pri))
+    setCtrlString("RSTP.Root Bridge", string.format("%s (%s)", addr, pri))
   end
+  paintHeaderBox(Controls["RSTP.Root Bridge"])
+end
+
+function SetBridgeAddress(addr)
+  state.bridgeAddr = addr or ""
+  refreshRootBridge()
 end
 
 function SetRootBridgeAddress(addr)
@@ -1574,6 +1858,20 @@ end
 function SetRootBridgePriority(pri)
   state.rootBridgePri = tostring(pri or "")
   refreshRootBridge()
+end
+
+-- RSTP role per port; only "root" is drawn, as an "R" badge at the
+-- bottom-left of the port (Port.zRoot N, same style as the MR badge).
+function SetPortRstpRole(port, role)
+  local c = Controls["Port.zRoot " .. port]
+  if not c then return end
+  local isRoot = (role == "root")
+  local fill   = isRoot and "#101828" or "#00000000"
+  c.Boolean = isRoot
+  c.Color   = fill
+  pcall(function() c.OffColor = fill end)
+  pcall(function() c.StrokeColor = isRoot and "#FFFFFF" or "#00000000" end)
+  c.Legend = isRoot and "R" or ""
 end
 
 function SetMrPorts(portList)
@@ -1643,6 +1941,18 @@ function handleFanPath(path, raw)
 end
 
 function handlePowerPath(path, raw)
+  if path == "/power/coupling/mode" then
+    local v = extractString(raw); if v then SetPowerCoupling(v) end
+    return true
+  end
+  if path == "/power/coupling/state" then
+    local v = extractString(raw); if v then SetCouplingState(v) end
+    return true
+  end
+  if path == "/power/total_power_usage" then
+    local v = extractNumber(raw); if v then SetTotalPower(v) end
+    return true
+  end
   local psu, field = path:match("^/power/psus/(psu%d+)/(.+)$")
   if not psu then return false end
   local id = tonumber(psu:match("(%d+)"))
@@ -1670,6 +1980,11 @@ function handleSpanningTreePath(path, raw)
     local v = extractNumber(raw); if v then SetRootBridgePriority(v) end
     return true
   end
+  local port = path:match("^/spanning_tree/mst/0/ports/(%d+)/role$")
+  if port then
+    local v = extractString(raw); if v then SetPortRstpRole(tonumber(port), v) end
+    return true
+  end
   return false
 end
 
@@ -1693,6 +2008,18 @@ end
 offlinePulseTimer = nil
 pulseOn = false
 
+-- The badge in the left display block and the dot in the right status
+-- block (as on the switch web UI) share one color.
+local function paintDeviceStatus(color)
+  local badge = Controls["Device.Status"]
+  if badge then badge.Color = color end
+  local dot = Controls["Device.Status Dot"]
+  if dot then
+    dot.Color = color
+    pcall(function() dot.OffColor = color end)
+  end
+end
+
 function SetDeviceStatus(status)
   local ctrl = Controls["Device.Status"]
   if not ctrl then return end
@@ -1704,14 +2031,14 @@ function SetDeviceStatus(status)
     end
     pulseOn = false
     ctrl.String = "Online"
-    ctrl.Color  = "#00C800"
+    paintDeviceStatus("#00C800")
   elseif status == "offline" then
     ctrl.String = "Offline"
     if not offlinePulseTimer then
       offlinePulseTimer = Timer.New()
       offlinePulseTimer.EventHandler = function()
         pulseOn = not pulseOn
-        ctrl.Color = pulseOn and "#C80000" or "#800000"
+        paintDeviceStatus(pulseOn and "#C80000" or "#800000")
       end
       offlinePulseTimer:Start(0.5)
     end
@@ -1878,9 +2205,19 @@ local function pickerControlNames()
   return names
 end
 
+-- Hiding also blanks the control: Designer keeps the last runtime Legend
+-- and String when the design goes offline but resets IsInvisible, so any
+-- leftover text would paint over the chassis through the transparent button.
 local function setPickerVisible(name, visible)
   local ctrl = Controls[name]
-  if ctrl then pcall(function() ctrl.IsInvisible = not visible end) end
+  if not ctrl then return end
+  pcall(function() ctrl.IsInvisible = not visible end)
+  if not visible then
+    pcall(function() ctrl.Legend = "" end)
+    pcall(function() ctrl.String = "" end)
+    pcall(function() ctrl.Color = "#00000000" end)
+    pcall(function() ctrl.OffColor = "#00000000" end)
+  end
 end
 
 function closeGroupPicker()
@@ -1979,6 +2316,137 @@ function pickerAssign(kind, id)
         if kind == "trunk" then value = "Trunk: " .. id end
         SetPortMemberOf(port, value)
       end
+    end,
+  }
+end
+
+
+--------------------------------------------------------------------------------
+-- Speed picker (main page). A Port.Speed Cell click opens a modal card that
+-- lists SPEED_CHOICES; a pick calls applyPortSpeed, which the Port.Speed pin
+-- handler shares (runtime.lua). zSpeed.* controls are declared in
+-- controls.lua and placed by buildSpeedPickerPanel (layout.lua).
+--------------------------------------------------------------------------------
+local function speedPickerControlNames()
+  local names = { "zSpeed.Bg", "zSpeed.Title", "zSpeed.Cancel" }
+  for i = 1, #SPEED_CHOICES do names[#names + 1] = "zSpeed.Item " .. i end
+  return names
+end
+
+function closeSpeedPicker()
+  state.speedPickerPort = nil
+  for _, name in ipairs(speedPickerControlNames()) do setPickerVisible(name, false) end
+end
+
+-- Speeds offered for a port. Unknown type (no /api/ports snapshot yet)
+-- offers everything; the API rejects what the port cannot do.
+function speedChoicesForPort(port)
+  local ptype = getPortState(port).portType
+  if ptype == "rj45" then return SPEED_CHOICES_COPPER end
+  if ptype == "sfp" then return state.has10g and SPEED_CHOICES_SFP_10G or SPEED_CHOICES_SFP_1G end
+  return SPEED_CHOICES
+end
+
+function openSpeedPicker(port)
+  if state.baseIP == "" then return end
+  state.speedPickerPort = port
+  local pstate  = getPortState(port)
+  local current = (pstate.enabled == false) and "Disabled" or pstate.speed
+  local theme   = getThemeColors()
+  local allowed = {}
+  for _, label in ipairs(speedChoicesForPort(port)) do allowed[label] = true end
+
+  paintPickerItem("zSpeed.Bg", "", rgbHex(theme.cardFill), false)
+  local title = Controls["zSpeed.Title"]
+  if title then
+    title.String = string.format("Port %d: link speed", port)
+    setPickerVisible("zSpeed.Title", true)
+  end
+  paintPickerItem("zSpeed.Cancel", "Cancel", rgbHex(theme.buttonOffColor), false)
+  for i, label in ipairs(SPEED_CHOICES) do
+    local name = "zSpeed.Item " .. i
+    if allowed[label] then
+      local isCurrent = (label == current)
+      paintPickerItem(name, label,
+        rgbHex(isCurrent and theme.accentCyan or theme.buttonOffColor), isCurrent)
+    else
+      setPickerVisible(name, false)
+    end
+  end
+end
+
+-- Apply a SPEED_CHOICES label to a port. "Disabled" turns the port off;
+-- anything else turns it on, then PUTs link_speed. WS confirms the new
+-- speed via SetPortSpeed; a rejected PUT rolls back to the last known value.
+function applyPortSpeed(port, label)
+  if state.baseIP == "" then return end
+  local pstate  = getPortState(port)
+  local headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders())
+
+  if label == "Disabled" then
+    HttpClient.Upload {
+      Url     = string.format("http://%s/api/ports/port/%d/enabled", state.baseIP, port),
+      Method  = "PUT",
+      Data    = "false",
+      Headers = headers,
+      EventHandler = function(_tbl, status, _body, err)
+        log("Disabled port " .. port .. " => status: " .. tostring(status) .. ", err: " .. tostring(err))
+      end,
+    }
+    return
+  end
+
+  -- Ensure the port is enabled before setting the speed
+  HttpClient.Upload {
+    Url     = string.format("http://%s/api/ports/port/%d/enabled", state.baseIP, port),
+    Method  = "PUT",
+    Data    = "true",
+    Headers = headers,
+    EventHandler = function(_tbl, status, _body, err)
+      log("Enabled port " .. port .. " => status: " .. tostring(status) .. ", err: " .. tostring(err))
+    end,
+  }
+
+  pstate.speedPending = true
+  renderPortUI(port)
+
+  local apiSpeed = SPEED_API_MAP[label]
+  local payload
+  if label == "Auto" then
+    payload = '{"mode":"auto","speed":["all"]}'
+  elseif apiSpeed == "1gbps fdx" then
+    payload = '{"mode":"auto","speed":["1gbps fdx"]}'
+  else
+    payload = string.format('{"mode":"fixed","speed":["%s"]}', apiSpeed or label)
+  end
+
+  HttpClient.Upload {
+    Url     = string.format("http://%s/api/ports/port/%d/link_speed", state.baseIP, port),
+    Method  = "PUT",
+    Data    = payload,
+    Headers = headers,
+    EventHandler = function(_tbl, status, body, err)
+      log("Set link_speed on port " .. port .. " => " .. payload ..
+          " | status: " .. tostring(status) .. ", err: " .. tostring(err))
+      if status ~= 200 then
+        local reason = (type(body) == "string") and body:match('"reason"%s*:%s*"([^"]*)"') or nil
+        log("Link speed rejected on port " .. port .. (reason and (": " .. reason) or ""))
+        pstate.speedPending = false
+        if pstate.lastValidSpeed then
+          pstate.speed = pstate.lastValidSpeed
+        end
+        renderPortUI(port)
+        -- Flash the cell amber for 3 s, then repaint the real value.
+        local cell = Controls["Port.Speed Cell " .. port]
+        if cell then
+          local amber = rgbHex(getThemeColors().accentAmber)
+          cell.Legend = "Rejected"
+          cell.Color  = amber
+          pcall(function() cell.OffColor = amber end)
+          Timer.CallAfter(function() renderPortUI(port) end, 3)
+        end
+      end
+      -- On success WS confirms via SetPortSpeed()
     end,
   }
 end

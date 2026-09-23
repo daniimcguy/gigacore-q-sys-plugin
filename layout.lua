@@ -6,7 +6,7 @@ state.darkMode = (darkModeValue == "Yes")
 local modelString    = resolveModel(props)
 local portCount      = getPortCount(modelString)
 state.portCount      = portCount
-state.selectedModel  = modelString  -- so runtime (no Properties access) can warn on mismatch
+state.selectedModel  = modelString  -- design time only; the runtime reads Properties["Model"]
 
 -- Port-settings grid geometry, shared by the chassis page and the page
 -- size helpers. One column = label + enable + legend + rlinkx + poe toggle
@@ -584,6 +584,131 @@ end
 --     a Port.Link button, PoE pip, trunk badge, RLinkX indicator.
 --   • Compact legend + group color row below the SVG.
 --------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Status block: the black "screen" the switch web UI draws right of the
+-- chassis. Status dot top-left, RSTP root bridge lines under it, PSU column
+-- at the right (PSU1 label, icon, coupling glyph, icon, PSU2 label).
+-- Static placeholders are gfx; the runtime paints the text controls opaque
+-- when data lands (paintHeaderBox), pushes a state-tinted PSU icon into
+-- PSU.N Icon (Legend IconData, over the grey gfx icon) and the coupling glyph.
+--------------------------------------------------------------------------------
+local STATUS_W = 210
+
+local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
+  gfx[#gfx+1] = {
+    Type         = "Rectangle",
+    Position     = { x, y },
+    Size         = { STATUS_W, h },
+    Fill         = theme.pageBg,
+    StrokeColor  = { 255, 255, 255, 255 },
+    StrokeWidth  = outlineW,
+    CornerRadius = 4,
+  }
+  local pad   = 5
+  local inX   = x + outlineW + pad
+  local inY   = y + outlineW + pad
+  local inW   = STATUS_W - (outlineW + pad) * 2
+  local lineH = 14
+
+  local function text(tx, ty, w, h2, str, color, align, size)
+    gfx[#gfx+1] = {
+      Type       = "Text",
+      Text       = str,
+      Position   = { tx, ty },
+      Size       = { w, h2 },
+      Font       = "Roboto",
+      FontSize   = size or 10,
+      Color      = color,
+      HTextAlign = align or "Left",
+      VTextAlign = "Center",
+    }
+  end
+  local function valueBox(name, bx, by, w)
+    layout[name] = {
+      Style        = "Text",
+      Position     = { bx, by },
+      Size         = { w, lineH },
+      IsReadOnly   = true,
+      Color        = { 0, 0, 0, 0 },
+      Font         = "Roboto",
+      FontSize     = 10,
+      TextColor    = theme.textPrimary,
+      StrokeWidth  = 0,
+      CornerRadius = 1,
+      HTextAlign   = "Left",
+      VTextAlign   = "Center",
+    }
+  end
+  local function flatButton(name, bx, by, w, h2, extra)
+    local entry = {
+      Style             = "Button",
+      ButtonStyle       = "Momentary",
+      ButtonVisualStyle = "Flat",
+      Position          = { bx, by },
+      Size              = { w, h2 },
+      Color             = { 0, 0, 0, 0 },
+      OffColor          = { 0, 0, 0, 0 },
+      StrokeColor       = { 0, 0, 0, 0 },
+      StrokeWidth       = 0,
+      Legend            = "",
+    }
+    for k, v in pairs(extra or {}) do entry[k] = v end
+    layout[name] = entry
+  end
+
+  -- Status dot (grey placeholder offline; runtime paints green / red pulse)
+  local dotD = 7
+  gfx[#gfx+1] = {
+    Type         = "Rectangle",
+    Position     = { inX, inY + 2 },
+    Size         = { dotD, dotD },
+    Fill         = theme.badgeOffBg,
+    StrokeWidth  = 0,
+    CornerRadius = 3,
+  }
+  flatButton("Device.Status Dot", inX, inY + 2, dotD, dotD, { CornerRadius = 3 })
+
+  -- RSTP lines, left of the PSU column
+  local psuColW = 48
+  local textW   = inW - psuColW - pad
+  local line2   = inY + lineH
+  text(inX, line2, textW, lineH, "Root bridge", theme.textMuted)
+  text(inX, line2 + lineH, textW, lineH, "---", theme.textMuted)
+  valueBox("RSTP.Root Bridge", inX, line2 + lineH, textW)
+  local prioW = 44
+  text(inX, line2 + lineH * 2, prioW, lineH, "Priority", theme.textMuted)
+  text(inX + prioW, line2 + lineH * 2, textW - prioW, lineH, "---", theme.textMuted)
+  valueBox("RSTP.Bridge Priority", inX + prioW, line2 + lineH * 2, textW - prioW)
+
+  -- PSU column: label, icon in a halo ring, coupling glyph, icon, label
+  local colX   = inX + inW - psuColW
+  local labelH = 12
+  local haloD  = 24
+  local iconD  = 18
+  local glyphH = 14
+  local iconX  = colX + math.floor((psuColW - iconD) / 2)
+  local cy     = inY
+  local function psu(id)
+    local labelY = (id == 1) and cy or (cy + haloD)
+    local haloY  = (id == 1) and (cy + labelH) or cy
+    text(colX, labelY, psuColW, labelH, "PSU" .. id, theme.textPrimary, "Center")
+    gfx[#gfx+1] = {
+      Type     = "Svg",
+      Image    = LogoPSU,
+      Position = { iconX, haloY + math.floor((haloD - iconD) / 2) },
+      Size     = { iconD, iconD },
+    }
+    flatButton("PSU." .. id .. " Icon", iconX, haloY + math.floor((haloD - iconD) / 2), iconD, iconD)
+  end
+  psu(1)
+  cy = cy + labelH + haloD
+  flatButton("Power.Coupling Glyph", colX, cy, psuColW, glyphH, {
+    Font = "Roboto", FontSize = 12, TextColor = { 0, 200, 0, 255 }, HTextAlign = "Center",
+  })
+  cy = cy + glyphH
+  psu(2)
+end
+
 local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
   local vbW, vbH   = coords.viewBox.w, coords.viewBox.h
   -- All chassis render at the same visible height. The artwork is cropped
@@ -640,6 +765,10 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     Position = { svgX, svgY },
     Size     = { svgW, svgH },
   }
+
+  -- Status block butted against the chassis right edge (the web UI's
+  -- right-hand screen); lives inside the 380px right margin.
+  buildStatusBlock(layout, gfx, theme, svgX + svgW, blockY, svgH, outlineW)
 
   -- Screen contents: logo + status badge on the first row, then model,
   -- device name, IP, firmware + MAC. Static placeholders sit under the
@@ -724,7 +853,7 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       IsBold     = bold or false,
     }
   end
-  local function screenBox(name, x, y, w)
+  local function screenBox(name, x, y, w, bold)
     layout[name] = {
       Style        = "Text",
       Position     = { x, y },
@@ -733,6 +862,7 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       Color        = { 0, 0, 0, 0 },
       Font         = "Roboto",
       FontSize     = 10,
+      IsBold       = bold or false,
       TextColor    = theme.textPrimary,
       StrokeWidth  = 0,
       CornerRadius = 1,
@@ -743,6 +873,7 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
   screenText(lineX, line1, lineW, model, theme.textPrimary, true)
   for i = 1, 4 do screenText(lineX, line1 + lineH * i, lineW, "---", theme.textMuted) end
   local fwW = 44
+  screenBox("Device.Model",       lineX, line1, lineW, true)
   screenBox("Device.Name",        lineX, line1 + lineH, lineW)
   screenBox("Device.Description", lineX, line1 + lineH * 2, lineW)
   screenBox("Device.IP Info",     lineX, line1 + lineH * 3, lineW)
@@ -830,8 +961,11 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       haloTopSvg = rowMidSvg + innerGapSvg
       haloBotSvg = vbH - edgeGapSvg
     end
-    local haloY = svgY + haloTopSvg * sy
-    local haloH = (haloBotSvg - haloTopSvg) * sy
+    -- Integer rect: Designer truncates a fractional Position/Size, which left
+    -- the top-row halo ~1.5 px short and bared the artwork's port outline
+    -- at the RLinkX ring's rounded bottom-left corner.
+    local haloY = math.floor(svgY + haloTopSvg * sy + 0.5)
+    local haloH = math.floor(svgY + haloBotSvg * sy + 0.5) - haloY
     layout["Port Bg" .. p.port] = {
       Style           = "Text",
       Position        = { bx - bgPadX, haloY },
@@ -955,14 +1089,18 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     }
 
     -- Trunk badge — top-left corner of the group-color halo (inside the
-    -- halo's edge), so it visually "belongs" to the colored card.
-    local tbSize = 10
+    -- halo's edge), so it visually "belongs" to the colored card. The
+    -- runtime fills the button with an IconData triangle (trunkBadgeLegend).
+    -- Designer draws a Button's content 2 px inside its layout box (measured
+    -- on the rings and port bodies in Designer, 2026-11-05), so the box
+    -- grows by that inset to put the 6 px triangle on the halo corner.
+    local tbSize, buttonInset = 6, 2
     layout["Port.Trunk Badge " .. p.port] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
       ButtonVisualStyle = "Flat",
-      Position          = { bx - bgPadX, haloY },
-      Size              = { tbSize, tbSize },
+      Position          = { bx - bgPadX - buttonInset, haloY - buttonInset },
+      Size              = { tbSize + buttonInset * 2, tbSize + buttonInset * 2 },
       IsReadOnly        = true,
       Font              = "Roboto",
       FontSize          = 10,
@@ -987,6 +1125,30 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       ButtonVisualStyle = "Flat",
       Position          = { bx + bw - mrW + 3, by - 4 },
       Size              = { mrW, mrH },
+      IsReadOnly        = true,
+      Font              = "Roboto",
+      FontSize          = 8,
+      Legend            = "",
+      TextColor         = { 255, 255, 255, 255 },
+      Color             = { 0, 0, 0, 0 },
+      OffColor          = { 0, 0, 0, 0 },
+      StrokeColor       = { 0, 0, 0, 0 },
+      StrokeWidth       = 1,
+      CornerRadius      = 2,
+      IsBold            = true,
+    }
+
+    -- RSTP root-port badge — straddles the port bottom edge, bottom-left:
+    -- the top corners are taken (trunk badge, MR badge) and the bottom-row
+    -- PoE pip sits centred under the port, so the left 12 px stay clear.
+    -- Runtime SetPortRstpRole paints it like the MR badge, legend "R".
+    local rbW, rbH = 12, 11
+    layout["Port.zRoot " .. p.port] = {
+      Style             = "Button",
+      ButtonStyle       = "Toggle",
+      ButtonVisualStyle = "Flat",
+      Position          = { bx - 3, by + bh - rbH + 4 },
+      Size              = { rbW, rbH },
       IsReadOnly        = true,
       Font              = "Roboto",
       FontSize          = 8,
@@ -1136,18 +1298,21 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
       CornerRadius      = 2,
     }
 
-    layout["Port.Speed " .. p] = {
-      Style        = "ComboBox",
-      Position     = { speedX, y },
-      Size         = { speedW, cellH },
-      Font         = "Roboto",
-      FontSize     = 10,
-      TextColor    = theme.textPrimary,
-      Color        = { 0, 0, 0, 0 },
-      IsReadOnly   = false,
-      StrokeColor  = theme.cardStroke,
-      StrokeWidth  = 1,
-      CornerRadius = 1,
+    layout["Port.Speed Cell " .. p] = {
+      Style             = "Button",
+      ButtonStyle       = "Momentary",
+      ButtonVisualStyle = "Flat",
+      Position          = { speedX, y },
+      Size              = { speedW, cellH },
+      Font              = "Roboto",
+      FontSize          = 10,
+      Legend            = "",
+      TextColor         = { 255, 255, 255, 255 },
+      Color             = { 60, 70, 90, 255 },
+      OffColor          = { 60, 70, 90, 255 },
+      StrokeColor       = theme.cardStroke,
+      StrokeWidth       = 1,
+      CornerRadius      = 2,
     }
   end
 
@@ -1206,6 +1371,46 @@ end
 --------------------------------------------------------------------------------
 local PICKER_PAD, PICKER_TITLE_H, PICKER_BTN_W = 8, 20, 70
 
+local PICKER_CLEAR = { 0, 0, 0, 0 }
+
+local function pickerButton(layout, name, x, y, w, h)
+  layout[name] = {
+    Style             = "Button",
+    ButtonStyle       = "Momentary",
+    ButtonVisualStyle = "Flat",
+    Position          = { x, y },
+    Size              = { w, h },
+    Font              = "Roboto",
+    FontSize          = 10,
+    Legend            = "",
+    TextColor         = { 255, 255, 255 },
+    Color             = PICKER_CLEAR,
+    OffColor          = PICKER_CLEAR,
+    StrokeColor       = PICKER_CLEAR,
+    StrokeWidth       = 0,
+    CornerRadius      = 3,
+    HTextAlign        = "Center",
+    VTextAlign        = "Center",
+  }
+end
+local function pickerText(layout, name, x, y, w, h, textColor)
+  layout[name] = {
+    Style        = "Text",
+    Position     = { x, y },
+    Size         = { w, h },
+    Font         = "Roboto",
+    FontSize     = 11,
+    IsBold       = true,
+    HTextAlign   = "Left",
+    VTextAlign   = "Center",
+    TextColor    = textColor,
+    Color        = PICKER_CLEAR,
+    StrokeWidth  = 0,
+    IsReadOnly   = true,
+    String       = "",
+  }
+end
+
 local function buildGroupPickerPanel(layout, model, theme)
   local rows   = groupsRowsForModel(model)
   local pageW  = pageWidthForModel(model)
@@ -1214,64 +1419,60 @@ local function buildGroupPickerPanel(layout, model, theme)
                + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + PICKER_PAD
   local panelX = math.floor((pageW - panelW) / 2 + 0.5)
   local panelY = 10
-  local clear  = { 0, 0, 0, 0 }
-
-  local function pickerButton(name, x, y, w, h)
-    layout[name] = {
-      Style             = "Button",
-      ButtonStyle       = "Momentary",
-      ButtonVisualStyle = "Flat",
-      Position          = { x, y },
-      Size              = { w, h },
-      Font              = "Roboto",
-      FontSize          = 10,
-      Legend            = "",
-      TextColor         = { 255, 255, 255 },
-      Color             = clear,
-      OffColor          = clear,
-      StrokeColor       = clear,
-      StrokeWidth       = 0,
-      CornerRadius      = 3,
-      HTextAlign        = "Center",
-      VTextAlign        = "Center",
-    }
-  end
-  local function pickerText(name, x, y, w, h, textColor)
-    layout[name] = {
-      Style        = "Text",
-      Position     = { x, y },
-      Size         = { w, h },
-      Font         = "Roboto",
-      FontSize     = 11,
-      IsBold       = true,
-      HTextAlign   = "Left",
-      VTextAlign   = "Center",
-      TextColor    = textColor,
-      Color        = clear,
-      StrokeWidth  = 0,
-      IsReadOnly   = true,
-      String       = "",
-    }
-  end
-
-  pickerButton("zPicker.Bg", panelX, panelY, panelW, panelH)
+  pickerButton(layout, "zPicker.Bg", panelX, panelY, panelW, panelH)
   layout["zPicker.Bg"].CornerRadius = 4
 
   local titleY  = panelY + PICKER_PAD
   local cancelX = panelX + panelW - PICKER_PAD - PICKER_BTN_W
   local noneX   = cancelX - 6 - PICKER_BTN_W
-  pickerText("zPicker.Title", panelX + PICKER_PAD, titleY, noneX - 6 - (panelX + PICKER_PAD), PICKER_TITLE_H, theme.textPrimary)
-  pickerButton("zPicker.None",   noneX,   titleY, PICKER_BTN_W, PICKER_TITLE_H)
-  pickerButton("zPicker.Cancel", cancelX, titleY, PICKER_BTN_W, PICKER_TITLE_H)
+  pickerText(layout, "zPicker.Title", panelX + PICKER_PAD, titleY, noneX - 6 - (panelX + PICKER_PAD), PICKER_TITLE_H, theme.textPrimary)
+  pickerButton(layout, "zPicker.None",   noneX,   titleY, PICKER_BTN_W, PICKER_TITLE_H)
+  pickerButton(layout, "zPicker.Cancel", cancelX, titleY, PICKER_BTN_W, PICKER_TITLE_H)
 
   local labelY = titleY + PICKER_TITLE_H + 6
   walkGroupTrunkSections(model, panelX + PICKER_PAD, labelY, labelY + GT_LABEL_H + 6,
     function(si, _title, x, y, w)
-      pickerText("zPicker.Label " .. si, x, y, w, GT_LABEL_H, theme.textMuted)
+      pickerText(layout, "zPicker.Label " .. si, x, y, w, GT_LABEL_H, theme.textMuted)
     end,
     function(kind, item, x, y)
-      pickerButton(((kind == "group") and "zPicker.Group " or "zPicker.Trunk ") .. item.slot, x, y, GT_CARD_W, GT_CARD_H)
+      pickerButton(layout, ((kind == "group") and "zPicker.Group " or "zPicker.Trunk ") .. item.slot, x, y, GT_CARD_W, GT_CARD_H)
     end)
+end
+
+
+--------------------------------------------------------------------------------
+-- Speed picker panel (main page). Same mechanics as the group picker: a
+-- Port.Speed Cell click makes the runtime paint and show it (openSpeedPicker
+-- in info.lua); zSpeed.Item i is SPEED_CHOICES[i], laid out as a 3-column
+-- grid of cards under a title row.
+--------------------------------------------------------------------------------
+local SPEED_PICKER_COLS, SPEED_CARD_W, SPEED_CARD_GAP_X = 3, 130, 6
+
+local function buildSpeedPickerPanel(layout, model, theme)
+  local n      = #SPEED_CHOICES
+  local rows   = math.ceil(n / SPEED_PICKER_COLS)
+  local pageW  = pageWidthForModel(model)
+  local panelW = 2 * PICKER_PAD + SPEED_PICKER_COLS * SPEED_CARD_W + (SPEED_PICKER_COLS - 1) * SPEED_CARD_GAP_X
+  local panelH = PICKER_PAD + PICKER_TITLE_H + 6 + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + PICKER_PAD
+  local panelX = math.floor((pageW - panelW) / 2 + 0.5)
+  local panelY = 10
+
+  pickerButton(layout, "zSpeed.Bg", panelX, panelY, panelW, panelH)
+  layout["zSpeed.Bg"].CornerRadius = 4
+
+  local titleY  = panelY + PICKER_PAD
+  local cancelX = panelX + panelW - PICKER_PAD - PICKER_BTN_W
+  pickerText(layout, "zSpeed.Title", panelX + PICKER_PAD, titleY, cancelX - 6 - (panelX + PICKER_PAD), PICKER_TITLE_H, theme.textPrimary)
+  pickerButton(layout, "zSpeed.Cancel", cancelX, titleY, PICKER_BTN_W, PICKER_TITLE_H)
+
+  local cardsY = titleY + PICKER_TITLE_H + 6
+  for i = 1, n do
+    local col = (i - 1) % SPEED_PICKER_COLS
+    local row = math.floor((i - 1) / SPEED_PICKER_COLS)
+    pickerButton(layout, "zSpeed.Item " .. i,
+      panelX + PICKER_PAD + col * (SPEED_CARD_W + SPEED_CARD_GAP_X),
+      cardsY + row * (GT_CARD_H + GT_GAP_Y), SPEED_CARD_W, GT_CARD_H)
+  end
 end
 
 local function buildControlsPage(layout, gfx, model)
@@ -1281,6 +1482,7 @@ local function buildControlsPage(layout, gfx, model)
   if svg and coords then
     buildSvgOverlayPage(layout, gfx, model, theme, svg, coords)
     buildGroupPickerPanel(layout, model, theme)
+    buildSpeedPickerPanel(layout, model, theme)
     return
   end
 
