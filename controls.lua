@@ -25,6 +25,17 @@ for p = 1, portCount do
     IsReadOnly  = true,
   }
 
+  -- Web UI port card on the chassis: a flat read-only Button whose Legend
+  -- carries the whole card as an IconData SVG (portCardSvg).
+  c[#c+1] = {
+    Name        = "Port.Card " .. p,
+    ControlType = "Button",
+    ButtonType  = "Toggle",
+    PinStyle    = "None",
+    UserPin     = false,
+    IsReadOnly  = true,
+  }
+
   -- Internal: drives port body fill color in layout. Not exposed as a pin.
   c[#c+1] = {
     Name        = "Port.Group Color " .. p,
@@ -43,17 +54,6 @@ for p = 1, portCount do
     PinStyle    = "Output",
     UserPin     = true,
     Value       = "",
-  }
-
-  -- Internal: drives the PoE pip color in layout. Button control so it can
-  -- share the layer with Port.Link and render on top of the port button.
-  c[#c+1] = {
-    Name        = "Port.PoE Color " .. p,
-    ControlType = "Button",
-    ButtonType  = "Toggle",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
   }
 
   -- Legacy under-port bar (no longer drawn). Kept as internal for any third
@@ -177,74 +177,6 @@ for p = 1, portCount do
     }
   end
 
-  -- RLinkX circular ring (only used on ethercon ports): outer filled circle
-  -- in rlinkx color, inner filled circle matching the port's button color so
-  -- only a ring is visible between them.
-  c[#c+1] = {
-    Name        = "RLinkX.Ring Fill " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-    Value       = "",
-  }
-  c[#c+1] = {
-    Name        = "RLinkX.Ring Hider " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-    Value       = "",
-  }
-
-  -- Trunk corner marker: a flat Button whose Legend carries an IconData
-  -- triangle filling the box (a "◤" glyph sat off the corner).
-  c[#c+1] = {
-    Name        = "Port.Trunk Badge " .. p,
-    ControlType = "Button",
-    ButtonType  = "Toggle",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-  }
-
-  -- Group color surround (SVG overlay mode). Text control — backup pattern:
-  -- layout sets Color="#00000000" + BackgroundColor=dark; runtime sets
-  -- .Color=hex to paint the fill.
-  c[#c+1] = {
-    Name        = "Port Bg" .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = false,
-    Value       = "",
-  }
-
-  -- RLinkX ring — sized slightly larger than Port.Link to show as a frame.
-  c[#c+1] = {
-    Name        = "Port RlinkX " .. p,
-    ControlType = "Button",
-    ButtonType  = "Toggle",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-  }
-
-  -- Disabled-port X marker — rendered in red in the center of the port when
-  -- the port is disabled. Sorts last ("zz" > "z") so it paints on top of
-  -- the port number.
-  c[#c+1] = {
-    Name        = "Port.zz Disabled X " .. p,
-    ControlType = "Text",
-    TextBoxType = "ReadOnly",
-    PinStyle    = "None",
-    UserPin     = false,
-    IsReadOnly  = true,
-    Value       = "",
-  }
 
   -- Per-port identify button (the port-number label in the settings grid).
   -- Clicking PUTs /api/port_identify with this port number.
@@ -500,19 +432,25 @@ for _, name in ipairs({ "PSU.1 Icon", "PSU.2 Icon", "Power.Coupling Glyph", "Dev
   c[#c+1] = { Name = name, ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "None", UserPin = false, Value = "" }
 end
 
--- MR (multicast router) and RSTP root-port markers per port — drive the
--- badges in layout. Internal only.
-for p = 1, portCount do
-  for _, prefix in ipairs({ "Port.zMR ", "Port.zRoot " }) do
-    c[#c+1] = {
-      Name        = prefix .. p,
-      ControlType = "Text",
-      TextBoxType = "ReadOnly",
-      PinStyle    = "None",
-      UserPin     = false,
-      Value       = "",
-    }
+-- 10G frame per tenG group (IconData Button, like Port.Card), shown while the
+-- 10g licence is active. Declared for the model with the most tenG groups.
+local tenGFrameCount = 0
+for _, layout in pairs(CHASSIS_LAYOUT) do
+  local count = 0
+  for _, group in ipairs(layout) do
+    if group.tenG then count = count + 1 end
   end
+  if count > tenGFrameCount then tenGFrameCount = count end
+end
+for i = 1, tenGFrameCount do
+  c[#c+1] = {
+    Name        = "Chassis.10G " .. i,
+    ControlType = "Button",
+    ButtonType  = "Toggle",
+    PinStyle    = "None",
+    UserPin     = false,
+    IsReadOnly  = true,
+  }
 end
 
 -- Testing page (disabled but control kept so page can be re-enabled without recompile)

@@ -20,24 +20,18 @@ local GRID_ROW_H   = 22
 -- margin (380px from chassis right edge to plugin right edge). Reserves
 -- consistent space for future info controls regardless of chassis width.
 -- Chassis strip geometry shared by the page builders: [display block]
--- [cropped chassis SVG], both CHASSIS_H tall, starting at CHASSIS_X / _Y.
+-- [web UI chassis box] [status block], all CHASSIS_H tall, starting at
+-- CHASSIS_X / _Y.
 local CHASSIS_X  = 20
 local CHASSIS_Y  = 4
-local CHASSIS_H  = 104
+local CHASSIS_H  = 142   -- web UI chassis box (chassisGeometry h)
 local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
-local DISPLAY_GAP = 0    -- block butts against the cropped chassis
-
-local function chassisSvgWidth(model)
-  local coords = getPortCoords(model)
-  if coords then
-    return math.floor(coords.viewBox.w * CHASSIS_H / coords.viewBox.h + 0.5)
-  end
-  return 760
-end
+local DISPLAY_GAP = 8    -- display block to chassis box
+local STATUS_GAP  = 8    -- chassis box to status block
 
 local function pageWidthForModel(model)
   local rightMargin = 380
-  return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisSvgWidth(model) + rightMargin
+  return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisGeometry(model).w + rightMargin
 end
 
 -- Grid columns: as many as the page width fits; rows: ceil(ports / cols).
@@ -92,89 +86,6 @@ end
 -- plugin: the taller of the chassis page and the groups page.
 local function pageHeightForModel(model)
   return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
-end
-
---------------------------------------------------------------------------------
--- Single port block — faithful replica of the December 2025 backup design.
---
--- Per port (w × h):
---   ┌─────────┐   ← PoE pip sits above the top edge (14 × 8)
---   │         │
---   │  [link] │   ← port<N> button (link-up green / link-down grey)
---   │ ▁▁▁▁▁▁▁ │   ← RLinkX bar near bottom inside the button
---   └─────────┘
---    [Port 12]    ← Port Legend (nickname / display text)
---    [Group: 5]   ← Port Group Color — colored label below
---
--- Control names use v2.x title-case scheme but visual positioning mirrors backup.
---------------------------------------------------------------------------------
--- row: 1 = top row (pip above port), 2 = bottom row (pip below port).
-local function defineSinglePort(layout, gfx, portIndex, xPos, yPos, w, h, row)
-  row = row or 1
-  local gap     = 2
-  local btnH    = h
-  local poeH    = 8
-  local groupH  = 14
-  local legendH = 28
-  local nextY   = yPos + btnH + gap
-
-  -- Port legend (nickname display) below the port button
-  layout["Port.Legend " .. portIndex] = {
-    Style        = "Text",
-    Position     = { xPos + 4, nextY - 1 },
-    Size         = { w - 8, legendH },
-    FontSize     = 11,
-    Font         = "Roboto",
-    Color        = { 0, 0, 0, 0 },
-    StrokeWidth  = 0,
-    StrokeColor  = { 0, 0, 0, 0 },
-    TextColor    = { 255, 255, 255 },
-    HTextAlign   = "Center",
-    VTextAlign   = "Top",
-    IsReadOnly   = true,
-  }
-
-  nextY = nextY + legendH + gap
-
-  -- Colored group/trunk label below the legend
-  layout["Port.Group Color " .. portIndex] = {
-    Style           = "Text",
-    Position        = { xPos + 4, nextY - 4 },
-    Size            = { w - 8, groupH },
-    IsReadOnly      = true,
-    FontSize        = 11,
-    Color           = { 0, 0, 0, 0 },
-    StrokeWidth     = 0,
-    StrokeColor     = { 0, 0, 0, 0 },
-    Font            = "Roboto",
-    HTextAlign      = "Center",
-    VTextAlign      = "Center",
-    BackgroundColor = { 25, 28, 42, 220 },
-    CornerRadius    = 6,
-  }
-
-  -- PoE pip lives INSIDE the port body, hugging the top edge on row 1 and
-  -- the bottom edge on row 2 (Araneo convention). Use "Indicator" style so
-  -- Q-SYS paints the Color fill reliably even with empty String.
-  local pipW, pipH = 22, 8
-  local pipX = xPos + math.floor((w - pipW) / 2)
-  local pipY = (row == 2) and (yPos + btnH - pipH - 5) or (yPos + 5)
-  -- Render pip as a Button — same layer as the Port.Link button. When
-  -- declared AFTER Port.Link in the rendering pass, Q-SYS draws it in front.
-  layout["Port.PoE Color " .. portIndex] = {
-    Style             = "Button",
-    ButtonStyle       = "Toggle",
-    ButtonVisualStyle = "Flat",
-    Position          = { pipX, pipY },
-    Size              = { pipW, pipH },
-    IsReadOnly        = true,
-    Color             = { 0, 0, 0, 0 },
-    OffColor          = { 0, 0, 0, 0 },
-    StrokeColor       = { 0, 0, 0, 0 },
-    StrokeWidth       = 0,
-    CornerRadius      = 2,
-  }
-
 end
 
 local function drawCommonLogos(gfx)
@@ -382,207 +293,8 @@ local function drawGridBackground(gfx, w, h, theme)
 end
 
 --------------------------------------------------------------------------------
--- Main controls page — faithful replica of the December 2025 backup layout.
---   • Groupbox background
---   • Top-left Luminex logo + common device info (device_name, ip_info, mac_fw)
---   • 2 rows of ports; each port = a rounded rectangle backdrop with a Button
---     for link state, a big port number label, and the defineSinglePort
---     indicators (PoE pip, legend, group/trunk color label, RLinkX bar).
---------------------------------------------------------------------------------
--- Render one regular RJ45 port (rectangular, 66×44).
-local function renderRJ45Port(layout, gfx, portIndex, xPos, yPos, theme, row)
-  local btnW, btnH = 66, 44
-
-  gfx[#gfx+1] = {
-    Type         = "Rectangle",
-    Position     = { xPos + 1, yPos + 1 },
-    Size         = { btnW - 2, 88 },
-    Fill         = theme.rectangleFill,
-    StrokeColor  = { 0, 0, 0, 60 },
-    StrokeWidth  = 1,
-    CornerRadius = 14,
-  }
-
-  layout["Port.Link " .. portIndex] = {
-    Style             = "Button",
-    ButtonStyle       = "Toggle",
-    ButtonVisualStyle = "Flat",
-    Position          = { xPos, yPos },
-    Size              = { btnW, btnH },
-    IsReadOnly        = true,
-    Color             = LINK_ON,
-    OffColor          = LINK_OFF,
-    StrokeColor       = { 0, 0, 0, 0 },
-    StrokeWidth       = 0,
-    CornerRadius      = 2,
-  }
-
-  local inset = 2
-  layout["RLinkX.Edge Top " .. portIndex] = {
-    Style = "Text", Position = { xPos + inset, yPos + inset }, Size = { btnW - inset * 2, 2 },
-    FontSize = 1, IsReadOnly = true, Color = { 0, 0, 0, 0 }, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-  }
-  layout["RLinkX.Edge Bottom " .. portIndex] = {
-    Style = "Text", Position = { xPos + inset, yPos + btnH - inset - 2 }, Size = { btnW - inset * 2, 2 },
-    FontSize = 1, IsReadOnly = true, Color = { 0, 0, 0, 0 }, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-  }
-  layout["RLinkX.Edge Left " .. portIndex] = {
-    Style = "Text", Position = { xPos + inset, yPos + inset }, Size = { 2, btnH - inset * 2 },
-    FontSize = 1, IsReadOnly = true, Color = { 0, 0, 0, 0 }, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-  }
-  layout["RLinkX.Edge Right " .. portIndex] = {
-    Style = "Text", Position = { xPos + btnW - inset - 2, yPos + inset }, Size = { 2, btnH - inset * 2 },
-    FontSize = 1, IsReadOnly = true, Color = { 0, 0, 0, 0 }, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-  }
-
-  layout["Port.Trunk Badge " .. portIndex] = {
-    Style       = "Text",
-    Position    = { xPos, yPos - 3 },
-    Size        = { 14, 14 },
-    Font        = "Roboto",
-    FontSize    = 16,
-    IsReadOnly  = true,
-    Color       = { 0, 0, 0, 0 },
-    TextColor   = theme.trunkBadge,
-    StrokeWidth = 0,
-    HTextAlign  = "Left",
-    VTextAlign  = "Top",
-    IsBold      = true,
-  }
-
-  gfx[#gfx+1] = {
-    Type       = "Text",
-    Text       = tostring(portIndex),
-    Color      = { 200, 200, 200, 255 },
-    Position   = { xPos, yPos },
-    Size       = { btnW, btnH },
-    Font       = "Roboto",
-    FontSize   = 23,
-    HTextAlign = "Center",
-    IsBold     = true,
-  }
-
-  defineSinglePort(layout, gfx, portIndex, xPos, yPos, btnW, btnH, row)
-end
-
--- Render one ethercon port (large round connector, ~62×62, very high
--- CornerRadius for a circular look). Used for ports 1..N on t-models.
-local function renderEtherconPort(layout, gfx, portIndex, xPos, yPos, theme)
-  local ethW, ethH = 62, 62
-
-  gfx[#gfx+1] = {
-    Type         = "Rectangle",
-    Position     = { xPos - 1, yPos + 1 },
-    Size         = { ethW + 2, 90 },
-    Fill         = theme.rectangleFill,
-    StrokeColor  = { 0, 0, 0, 60 },
-    StrokeWidth  = 1,
-    CornerRadius = 14,
-  }
-
-  layout["Port.Link " .. portIndex] = {
-    Style             = "Button",
-    ButtonStyle       = "Toggle",
-    ButtonVisualStyle = "Flat",
-    Position          = { xPos, yPos },
-    Size              = { ethW, ethH },
-    IsReadOnly        = true,
-    Color             = LINK_ON,
-    OffColor          = LINK_OFF,
-    StrokeColor       = { 0, 0, 0, 0 },
-    StrokeWidth       = 0,
-    CornerRadius      = 31,
-  }
-
-  -- Ethercon RLinkX ring — outer fill is the same size as the port (inset 0)
-  -- so the ring hugs the edge; inner hider is inset 4px so the visible ring
-  -- is ~4px wide. Runtime mirrors the Port Link's color into the hider so it
-  -- blends regardless of link-up/down brightness.
-  local fillSize  = ethW
-  local hiderSize = ethW - 8
-  layout["RLinkX.Ring Fill " .. portIndex] = {
-    Style = "Text", Position = { xPos, yPos }, Size = { fillSize, fillSize },
-    FontSize = 1, IsReadOnly = true, Color = { 0, 0, 0, 0 }, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-    CornerRadius = math.floor(fillSize / 2),
-  }
-  layout["RLinkX.Ring Hider " .. portIndex] = {
-    Style = "Text", Position = { xPos + 4, yPos + 4 }, Size = { hiderSize, hiderSize },
-    FontSize = 1, IsReadOnly = true, Color = LINK_ON, TextColor = { 0, 0, 0, 0 }, StrokeWidth = 0,
-    CornerRadius = math.floor(hiderSize / 2),
-  }
-
-  layout["Port.Trunk Badge " .. portIndex] = {
-    Style       = "Text",
-    Position    = { xPos + 4, yPos - 1 },
-    Size        = { 14, 14 },
-    Font        = "Roboto",
-    FontSize    = 16,
-    IsReadOnly  = true,
-    Color       = { 0, 0, 0, 0 },
-    TextColor   = theme.trunkBadge,
-    StrokeWidth = 0,
-    HTextAlign  = "Left",
-    VTextAlign  = "Top",
-    IsBold      = true,
-  }
-
-  -- Port number BELOW the ethercon (matches reference; also avoids being
-  -- covered by the ring-hider Text control inside the circle).
-  gfx[#gfx+1] = {
-    Type       = "Text",
-    Text       = tostring(portIndex),
-    Color      = { 220, 230, 250, 255 },
-    Position   = { xPos, yPos + ethH + 1 },
-    Size       = { ethW, 13 },
-    Font       = "Roboto",
-    FontSize   = 12,
-    HTextAlign = "Center",
-    VTextAlign = "Top",
-    IsBold     = true,
-  }
-
-  -- Group/trunk color label tucked just below the port number — kept compact
-  -- so the bottom-row ethercon doesn't push into the IP/MAC strip at y=250.
-  -- The Port Legend control is intentionally NOT placed in the layout for
-  -- ethercons (no room and reference design doesn't show it).
-  layout["Port.Group Color " .. portIndex] = {
-    Style           = "Text",
-    Position        = { xPos + 4, yPos + ethH + 16 },
-    Size            = { ethW - 8, 14 },
-    IsReadOnly      = true,
-    FontSize        = 10,
-    Color           = { 0, 0, 0, 0 },
-    StrokeWidth     = 0,
-    StrokeColor     = { 0, 0, 0, 0 },
-    Font            = "Roboto",
-    HTextAlign      = "Center",
-    VTextAlign      = "Center",
-    BackgroundColor = { 25, 28, 42, 220 },
-    CornerRadius    = 6,
-  }
-
-  -- PoE pip ABOVE the ethercon (same convention as RJ45)
-  layout["Port.PoE Color " .. portIndex] = {
-    Style        = "Text",
-    Position     = { xPos + math.floor((ethW - 14) / 2), yPos - 5 },
-    Size         = { 14, 8 },
-    FontSize     = 1,
-    IsReadOnly   = true,
-    Color        = { 0, 0, 0, 0 },
-    TextColor    = { 0, 0, 0, 0 },
-    StrokeWidth  = 0,
-    CornerRadius = 2,
-    HTextAlign   = "Center",
-    VTextAlign   = "Center",
-  }
-end
-
---------------------------------------------------------------------------------
--- Main page with per-model SVG chassis + interactive port overlays.
---   • Render the real product-chassis SVG at a known position/size.
---   • For each port in PORT_COORDS[model], compute screen coords and place
---     a Port.Link button, PoE pip, trunk badge, RLinkX indicator.
---   • Compact legend + group color row below the SVG.
+-- Main page: device display block, the web UI chassis box (offline graphic
+-- plus one Port.Card button per port), status block, port-settings grid.
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- Status block: the black "screen" the switch web UI draws right of the
@@ -709,28 +421,20 @@ local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
   psu(2)
 end
 
-local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
-  local vbW, vbH   = coords.viewBox.w, coords.viewBox.h
-  -- All chassis render at the same visible height. The artwork is cropped
-  -- left of port 1 (parser) and the device display block fills that spot,
-  -- like Araneo's screen. Width scales by aspect ratio.
+local function buildChassisPage(layout, gfx, model, theme)
+  local geometry = chassisGeometry(model)
   local blockX, blockY = CHASSIS_X, CHASSIS_Y
-  local svgX, svgY = blockX + DISPLAY_W + DISPLAY_GAP, CHASSIS_Y
-  local svgH       = CHASSIS_H
-  local svgW       = chassisSvgWidth(model)
-  local sx         = svgW / vbW
-  local sy         = svgH / vbH
-  local svgBottomY = svgY + svgH
+  local chassisX, chassisY = blockX + DISPLAY_W + DISPLAY_GAP, CHASSIS_Y
+  local svgH = CHASSIS_H
 
   -- Per-port settings grid below the chassis. Bottom gap matches the top
   -- gap so the page is symmetrically padded; column and row counts come
   -- from gridDimsForModel.
   local topGap    = 6
-  local gridY     = svgBottomY + topGap
+  local gridY     = chassisY + CHASSIS_H + topGap
   local cols, rows = gridDimsForModel(model)
-  local portCount = #coords.ports
+  local portCount = getPortCount(model)
   local rowH      = GRID_ROW_H
-  local poePorts  = (PORT_LAYOUT[model] and PORT_LAYOUT[model].poe) or 0
   local pageH     = pageHeightForModel(model)
 
   gfx[#gfx+1] = {
@@ -742,33 +446,34 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
     Size        = { pageWidthForModel(model), pageH },
   }
 
-  -- Device display block: closes the chassis frame on the left (the SVG's
-  -- own left edge is cropped away). Page-bg fill (the Araneo "screen"), and
-  -- the same white outline weight as the artwork (1 SVG unit = sx px).
-  local outlineW = math.max(1, math.floor(sx + 0.5))
+  -- Device display block (the web UI's left screen): page-bg fill, 1 px
+  -- white outline like the chassis box.
+  local outlineW = 1
   gfx[#gfx+1] = {
     Type         = "Rectangle",
     Position     = { blockX, blockY },
-    Size         = { DISPLAY_W + outlineW, svgH },
+    Size         = { DISPLAY_W, svgH },
     Fill         = theme.pageBg,
     StrokeColor  = { 255, 255, 255, 255 },
     StrokeWidth  = outlineW,
     CornerRadius = 4,
   }
   local scrX, scrY = blockX + outlineW, blockY + outlineW
-  local scrW, scrH = DISPLAY_W - outlineW * 2, svgH - outlineW * 2
+  local scrW = DISPLAY_W - outlineW * 2
 
-  -- Chassis SVG backdrop (cropped artwork)
+  -- Chassis box as the web UI draws it when not live (generated by
+  -- tools/gen_offline_chassis.py); the Port.Card buttons on top carry the
+  -- live cards and cover their offline twins.
   gfx[#gfx+1] = {
     Type     = "Svg",
-    Image    = svgImg,
-    Position = { svgX, svgY },
-    Size     = { svgW, svgH },
+    Image    = CHASSIS_OFFLINE_SVG[model],
+    Position = { chassisX, chassisY },
+    Size     = { geometry.w, CHASSIS_H },
   }
 
-  -- Status block butted against the chassis right edge (the web UI's
-  -- right-hand screen); lives inside the 380px right margin.
-  buildStatusBlock(layout, gfx, theme, svgX + svgW, blockY, svgH, outlineW)
+  -- Status block right of the chassis (the web UI's right-hand screen);
+  -- lives inside the 380px right margin.
+  buildStatusBlock(layout, gfx, theme, chassisX + geometry.w + STATUS_GAP, blockY, svgH, outlineW)
 
   -- Screen contents: logo + status badge on the first row, then model,
   -- device name, IP, firmware + MAC. Static placeholders sit under the
@@ -880,287 +585,39 @@ local function buildSvgOverlayPage(layout, gfx, model, theme, svgImg, coords)
   screenBox("Device.Firmware",    lineX, line1 + lineH * 4, fwW)
   screenBox("Device.MAC",         lineX + fwW + 4, line1 + lineH * 4, lineW - fwW - 4)
 
-  -- Screen rects snapped to whole pixels with a uniform pitch inside each
-  -- block of neighbouring ports (same row, regular spacing). Rounding each
-  -- port independently gave alternating 56/57 px gaps, visible as uneven
-  -- dark lines between the cards.
-  local screenRects = {}
-  do
-    local rowsByKey = { top = {}, bottom = {} }
-    for _, p in ipairs(coords.ports) do
-      local key = ((p.y + p.h / 2) < vbH / 2) and "top" or "bottom"
-      local list = rowsByKey[key]
-      list[#list + 1] = p
-    end
-    for _, list in pairs(rowsByKey) do
-      table.sort(list, function(a, b) return a.x < b.x end)
-      -- A block ends where the gap grows past the row's smallest pitch
-      -- (Araneo block gaps are only ~20% wider than the port pitch, e.g.
-      -- 18 vs 15 SVG units on the 30i) or the port kind changes.
-      local minGap = math.huge
-      for i = 2, #list do
-        local g = list[i].x - list[i - 1].x
-        if list[i].kind == list[i - 1].kind and g < minGap then minGap = g end
-      end
-      local blocks, cur = {}, nil
-      for i, p in ipairs(list) do
-        local prev = list[i - 1]
-        if prev and p.kind == prev.kind and (p.x - prev.x) <= minGap * 1.12 then
-          cur[#cur + 1] = p
-        else
-          cur = { p }
-          blocks[#blocks + 1] = cur
-        end
-      end
-      for _, blk in ipairs(blocks) do
-        local w  = math.floor(blk[1].w * sx + 0.5)
-        local h  = math.floor(blk[1].h * sy + 0.5)
-        local y  = math.floor(svgY + blk[1].y * sy + 0.5)
-        local x0 = math.floor(svgX + blk[1].x * sx + 0.5)
-        local pitch = 0
-        if #blk > 1 then
-          pitch = math.floor((blk[#blk].x - blk[1].x) * sx / (#blk - 1) + 0.5)
-        end
-        for i, p in ipairs(blk) do
-          screenRects[p.port] = { x = x0 + (i - 1) * pitch, y = y, w = w, h = h }
-        end
-      end
-    end
+  -- One IconData Button per port card (Port.Card N) and per 10G frame
+  -- (Chassis.10G N). A card box is the card plus CARD_BAR_SPACE on its
+  -- MultiLinkX side; a frame box adds FRAME_LABEL_SPACE on the left for the
+  -- rotated label. Designer draws a Button's content 2 px inside its box, so
+  -- every box grows by that inset (the SVG viewBox is the box without it).
+  local buttonInset = 2
+  local function iconButton(name, x, y, w, h)
+    layout[name] = {
+      Style             = "Button",
+      ButtonStyle       = "Toggle",
+      ButtonVisualStyle = "Flat",
+      Position          = { x - buttonInset, y - buttonInset },
+      Size              = { w + buttonInset * 2, h + buttonInset * 2 },
+      IsReadOnly        = true,
+      Color             = { 0, 0, 0, 0 },
+      OffColor          = { 0, 0, 0, 0 },
+      StrokeColor       = { 0, 0, 0, 0 },
+      StrokeWidth       = 0,
+      Legend            = "",
+    }
   end
-
-  -- Per-port interactive overlays
-  for _, p in ipairs(coords.ports) do
-    local rect = screenRects[p.port] or svgToScreen(p, svgX, svgY, svgW, svgH, vbW, vbH)
-    -- Grow each button by 1px each side so it hugs the SVG port outline
-    -- without pushing past the rlinkx / cable-clip indicators.
-    local bx = rect.x - 1
-    local by = rect.y - 1
-    local bw = rect.w + 2
-    local bh = rect.h + 2
-
-    -- Group-color halo behind the port. Strategy:
-    --   • If the port is large enough to span both rows (e.g. 20t ethercons
-    --     occupy ~50% of chassis height), wrap a single halo around the
-    --     whole port from chassis-top to chassis-bottom (with edge gap).
-    --   • Otherwise, anchor halo top/bottom to row-relative y values so
-    --     same-row halos are uniform height and rows don't overlap.
-    local bgPadX = 3
-    local edgeGapSvg  = 2
-    local innerGapSvg = 0.5
-    local rowMidSvg   = vbH / 2
-    local portCenterY = p.y + p.h / 2
-    local portIsTall  = p.h > (vbH * 0.45)
-    local haloTopSvg, haloBotSvg
-    if portIsTall then
-      haloTopSvg = edgeGapSvg
-      haloBotSvg = vbH - edgeGapSvg
-    elseif portCenterY < rowMidSvg then
-      haloTopSvg = edgeGapSvg
-      haloBotSvg = rowMidSvg - innerGapSvg
-    else
-      haloTopSvg = rowMidSvg + innerGapSvg
-      haloBotSvg = vbH - edgeGapSvg
+  for port, card in pairs(geometry.cards) do
+    local y = chassisY + card.y
+    if cardBarOnTop(card) then y = y - CARD_BAR_SPACE end
+    iconButton("Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
+  end
+  local frameIndex = 0
+  for _, frame in ipairs(geometry.frames) do
+    if frame.tenG then
+      frameIndex = frameIndex + 1
+      iconButton("Chassis.10G " .. frameIndex, chassisX + frame.x - FRAME_LABEL_SPACE, chassisY + frame.y,
+        frame.w + FRAME_LABEL_SPACE, frame.h)
     end
-    -- Integer rect: Designer truncates a fractional Position/Size, which left
-    -- the top-row halo ~1.5 px short and bared the artwork's port outline
-    -- at the RLinkX ring's rounded bottom-left corner.
-    local haloY = math.floor(svgY + haloTopSvg * sy + 0.5)
-    local haloH = math.floor(svgY + haloBotSvg * sy + 0.5) - haloY
-    layout["Port Bg" .. p.port] = {
-      Style           = "Text",
-      Position        = { bx - bgPadX, haloY },
-      Size            = { bw + bgPadX * 2, haloH },
-      FontSize        = 1,
-      IsReadOnly      = true,
-      Color           = { 0, 0, 0, 0 },
-      TextColor       = { 0, 0, 0, 0 },
-      BackgroundColor = { 0, 0, 0, 0 },
-      StrokeWidth     = 0,
-      StrokeColor     = { 0, 0, 0, 0 },
-      CornerRadius    = 3,
-      HTextAlign      = "Center",
-      VTextAlign      = "Center",
-    }
-
-    -- RLinkX ring — a ~2px-thicker frame around the port body.
-    local rlPad = 3
-    layout["Port RlinkX " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { bx - rlPad, by - rlPad },
-      Size              = { bw + rlPad * 2, bh + rlPad * 2 },
-      IsReadOnly        = true,
-      Color             = { 20, 24, 40, 0 },
-      OffColor          = { 20, 24, 40, 0 },
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 0,
-      CornerRadius      = (p.kind == "ethercon") and math.floor((bw + rlPad * 2) / 2) or 3,
-    }
-
-    -- Port.Link button. Color is painted at runtime to encode link speed
-    -- (orange for 10/100 Mbps, green for 1Gbps+, dark for not connected).
-    -- Offline (never emulated) look follows Araneo's project mode: navy
-    -- body, thin cyan outline, port number inside. Runtime repaints Color
-    -- and OffColor with the link speed and blanks the Legend on disabled
-    -- ports.
-    layout["Port.Link " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { bx, by },
-      Size              = { bw, bh },
-      IsReadOnly        = true,
-      Color             = theme.portOffFill,
-      OffColor          = theme.portOffFill,
-      StrokeColor       = theme.portOffStroke,
-      StrokeWidth       = 1,
-      CornerRadius      = (p.kind == "ethercon") and math.floor(bw / 2) or 2,
-      Legend            = tostring(p.port),
-      Font              = "Roboto",
-      FontSize          = 11,
-      IsBold            = true,
-      TextColor         = theme.portText,
-    }
-
-    -- PoE pip — positioned on the SVG's cable-clip rect when one exists,
-    -- otherwise on a derived spot just above (top-row) or below (bottom-row)
-    -- the port. Ethercon ports usually have no SVG cable clip but still
-    -- need a pip location (the runtime picks color + visibility based on
-    -- /poe/ports/N state). SFP ports skip pip placement (no PoE support).
-    local pipPos, pipSize
-    if p.kind == "sfp" then
-      pipPos, pipSize = { -100, -100 }, { 1, 1 }
-    else
-      local poeRect = p.poe
-      if not poeRect then
-        local pipW, pipH = 5, 5
-        local pipX = p.x + (p.w - pipW) / 2
-        local pipY
-        if (p.y + p.h / 2) < vbH / 2 then
-          pipY = p.y - pipH + 2  -- mostly above port, 2 SVG units overlap
-        else
-          pipY = p.y + p.h - 2
-        end
-        poeRect = { x = pipX, y = pipY, w = pipW, h = pipH }
-      end
-      -- Pip x follows the snapped port centre (same offset as in the SVG).
-      local pipScreen = svgToScreen(poeRect, svgX, svgY, svgW, svgH, vbW, vbH)
-      local pipW = math.floor(pipScreen.w + 0.5)
-      local pipH = math.floor(pipScreen.h + 0.5)
-      local offsetSvg = (poeRect.x + poeRect.w / 2) - (p.x + p.w / 2)
-      local pipX = math.floor(rect.x + rect.w / 2 + offsetSvg * sx - pipW / 2 + 0.5)
-      pipPos  = { pipX, math.floor(pipScreen.y + 0.5) }
-      pipSize = { pipW, pipH }
-    end
-    -- Offline: PoE-capable ports show the grey "disabled" pip (Araneo
-    -- project mode); runtime repaints with the live PoE state.
-    local hasPoe = (p.kind ~= "sfp") and (p.port <= poePorts)
-    local pipOff = hasPoe and theme.poeDisabled or { 0, 0, 0, 0 }
-    layout["Port.PoE Color " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = pipPos,
-      Size              = pipSize,
-      IsReadOnly        = true,
-      Color             = pipOff,
-      OffColor          = pipOff,
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 0,
-      CornerRadius      = 1,
-    }
-
-    -- Disabled-port red X marker. Runtime sets String="✕" when disabled.
-    layout["Port.zz Disabled X " .. p.port] = {
-      Style       = "Text",
-      Position    = { bx, by },
-      Size        = { bw, bh },
-      Font        = "Roboto",
-      FontSize    = 14,
-      IsReadOnly  = true,
-      Color       = { 0, 0, 0, 0 },
-      TextColor   = { 220, 40, 40, 255 },
-      StrokeWidth = 0,
-      StrokeColor = { 0, 0, 0, 0 },
-      HTextAlign  = "Center",
-      VTextAlign  = "Center",
-      IsBold      = true,
-    }
-
-    -- Trunk badge — top-left corner of the group-color halo (inside the
-    -- halo's edge), so it visually "belongs" to the colored card. The
-    -- runtime fills the button with an IconData triangle (trunkBadgeLegend).
-    -- Designer draws a Button's content 2 px inside its layout box (measured
-    -- on the rings and port bodies in Designer, 2026-11-05), so the box
-    -- grows by that inset to put the 6 px triangle on the halo corner.
-    local tbSize, buttonInset = 6, 2
-    layout["Port.Trunk Badge " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { bx - bgPadX - buttonInset, haloY - buttonInset },
-      Size              = { tbSize + buttonInset * 2, tbSize + buttonInset * 2 },
-      IsReadOnly        = true,
-      Font              = "Roboto",
-      FontSize          = 10,
-      Legend            = "",
-      TextColor         = theme.trunkBadge,
-      Color             = { 0, 0, 0, 0 },
-      OffColor          = { 0, 0, 0, 0 },
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 0,
-      CornerRadius      = 0,
-    }
-
-    -- Multicast-router badge — sits ABOVE the port top edge, top-right.
-    -- Hidden by default (transparent Color/Stroke); runtime SetMrPorts
-    -- paints the white border, black fill, and "MR" legend for ports in
-    -- the IGMP snooping router list. Named "Port.zMR " so it sorts after
-    -- Port.PoE Color → renders on top.
-    local mrW, mrH = 16, 11
-    layout["Port.zMR " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { bx + bw - mrW + 3, by - 4 },
-      Size              = { mrW, mrH },
-      IsReadOnly        = true,
-      Font              = "Roboto",
-      FontSize          = 8,
-      Legend            = "",
-      TextColor         = { 255, 255, 255, 255 },
-      Color             = { 0, 0, 0, 0 },
-      OffColor          = { 0, 0, 0, 0 },
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 1,
-      CornerRadius      = 2,
-      IsBold            = true,
-    }
-
-    -- RSTP root-port badge — straddles the port bottom edge, bottom-left:
-    -- the top corners are taken (trunk badge, MR badge) and the bottom-row
-    -- PoE pip sits centred under the port, so the left 12 px stay clear.
-    -- Runtime SetPortRstpRole paints it like the MR badge, legend "R".
-    local rbW, rbH = 12, 11
-    layout["Port.zRoot " .. p.port] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { bx - 3, by + bh - rbH + 4 },
-      Size              = { rbW, rbH },
-      IsReadOnly        = true,
-      Font              = "Roboto",
-      FontSize          = 8,
-      Legend            = "",
-      TextColor         = { 255, 255, 255, 255 },
-      Color             = { 0, 0, 0, 0 },
-      OffColor          = { 0, 0, 0, 0 },
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 1,
-      CornerRadius      = 2,
-      IsBold            = true,
-    }
   end
 
   -- Per-port settings grid below the chassis. 4 columns × 8 rows of controls
@@ -1476,79 +933,10 @@ local function buildSpeedPickerPanel(layout, model, theme)
 end
 
 local function buildControlsPage(layout, gfx, model)
-  local theme  = getThemeColors()
-  local svg    = getChassisSvg(model)
-  local coords = getPortCoords(model)
-  if svg and coords then
-    buildSvgOverlayPage(layout, gfx, model, theme, svg, coords)
-    buildGroupPickerPanel(layout, model, theme)
-    buildSpeedPickerPanel(layout, model, theme)
-    return
-  end
-
-  local portCount     = getPortCount(model)
-  local etherconCount = getEtherconCount(model)
-  local rj45Count     = portCount - etherconCount  -- everything non-ethercon rendered uniformly
-
-  local btnW, btnH    = 66, 44
-  local colSpacing    = 5
-  local rowGap        = 60
-  local sideMargin    = SIDE_MARGIN
-  local topY          = 50
-  local botY          = topY + btnH + rowGap
-  local startX        = sideMargin
-  local theme         = getThemeColors()
-
-  -- Ethercon section dimensions (when present)
-  local ethW          = 62
-  local ethCols       = (etherconCount > 0) and math.ceil(etherconCount / 2) or 0
-  local ethSpacing    = 8
-  local ethSectionW   = (ethCols > 0) and (ethCols * ethW + (ethCols - 1) * ethSpacing) or 0
-  local sectionGap    = (etherconCount > 0) and 24 or 0
-
-  -- RJ45 section dimensions
-  local rj45Cols      = math.ceil(rj45Count / 2)
-  local rj45SectionW  = rj45Cols * btnW + math.max(0, rj45Cols - 1) * colSpacing
-
-  local totalPortsW   = ethSectionW + sectionGap + rj45SectionW
-  local totalW        = totalPortsW + sideMargin * 2
-  local totalH        = 275
-
-  gfx[#gfx+1] = {
-    Type        = "Groupbox",
-    Fill        = theme.groupboxFill,
-    StrokeColor = GROUPBOX_STROKE_COLOR,
-    StrokeWidth = GROUPBOX_STROKE_WIDTH,
-    Position    = GROUPBOX_POSITION,
-    Size        = { totalW + GROUPBOX_EXTRA_PADDING, totalH },
-  }
-
-  local lumCenterX, ipY = drawCommonLogos(gfx)
-  defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipY + -5)
-
-  -- Ethercon ports (sequential layout: 1..N/2 top row, N/2+1..N bottom row)
-  for i = 1, etherconCount do
-    local row = (i <= ethCols) and 0 or 1
-    local col = (row == 0) and (i - 1) or (i - ethCols - 1)
-    local xPos = startX + col * (ethW + ethSpacing)
-    local yPos = (row == 0) and topY or botY
-    renderEtherconPort(layout, gfx, i, xPos, yPos, theme)
-  end
-
-  -- All non-ethercon ports rendered uniformly as the standard RJ45 tile,
-  -- regardless of whether they're physically RJ45 or SFP. Keeps the layout
-  -- consistent like before — per-port-type sections were too disruptive.
-  local rj45StartX = startX + ethSectionW + sectionGap
-  local p = etherconCount + 1
-  for c = 0, rj45Cols - 1 do
-    if p > portCount then break end
-    local xPos = rj45StartX + c * (btnW + colSpacing)
-    renderRJ45Port(layout, gfx, p, xPos, topY, theme, 1)
-    p = p + 1
-    if p > portCount then break end
-    renderRJ45Port(layout, gfx, p, xPos, botY, theme, 2)
-    p = p + 1
-  end
+  local theme = getThemeColors()
+  buildChassisPage(layout, gfx, model, theme)
+  buildGroupPickerPanel(layout, model, theme)
+  buildSpeedPickerPanel(layout, model, theme)
 end
 
 --------------------------------------------------------------------------------
@@ -1713,7 +1101,7 @@ end
 --------------------------------------------------------------------------------
 local function buildConfigurationPage(layout, gfx, props)
   local theme  = getThemeColors()
-  -- Match main-page height (computed in buildSvgOverlayPage); use
+  -- Match main-page height (computed in buildChassisPage); use
   -- pageHeightForModel so tabs don't resize the window.
   local model = resolveModel(props)
   local totalW = pageWidthForModel(model)

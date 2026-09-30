@@ -1,6 +1,8 @@
 local pc = state.portCount or 30
 
 state.darkMode = Properties["Dark Mode"].Value ~= "No"
+state.chassis = chassisGeometry(resolveModel(Properties))
+clearPortCards()
 
 --------------------------------------------------------------------------------
 -- IP / connect / identify

@@ -73,11 +73,6 @@ function getPortCount(model)
   return GigaCoreModels[model] or 30
 end
 
-function getEtherconCount(model)
-  local l = PORT_LAYOUT[model]
-  return (l and l.ethercon) or 0
-end
-
 function getRJ45Count(model)
   local l = PORT_LAYOUT[model]
   return (l and l.rj45) or 0
@@ -88,38 +83,13 @@ function getSFPCount(model)
   return (l and l.sfp) or 0
 end
 
--- Look up the base64-encoded chassis SVG for a given model.
-
--- Base64 chassis artwork, cropped left of port 1 (see tools/parse_svg_ports.py).
-function getChassisSvg(model)
-  local c = PORT_COORDS and PORT_COORDS[model]
-  return c and c.svg or nil
-end
-
--- Return the parsed PORT_COORDS entry for a model, or nil if we haven't
--- built an accurate overlay for it yet (fall back to the generic grid).
-function getPortCoords(model)
-  return PORT_COORDS and PORT_COORDS[model]
-end
-
--- Translate a rect from SVG space (per the model's viewBox) to screen space
--- given where the SVG is rendered on the page.
-function svgToScreen(coords, svgX, svgY, svgW, svgH, vbW, vbH)
-  local sx = svgW / vbW
-  local sy = svgH / vbH
-  return {
-    x = svgX + coords.x * sx,
-    y = svgY + coords.y * sy,
-    w = coords.w * sx,
-    h = coords.h * sy,
-  }
-end
-
--- Resolve the model from the Model property (plain lookup).
+-- Resolve the model from the Model property. A value outside the choices
+-- (a design saved with an older plugin) falls back to the 30i.
 function resolveModel(props)
   local raw = props["Model"]
   local val = (type(raw) == "table") and raw.Value or raw
-  return val or "GigaCore 30i"
+  if GigaCoreModels[val] then return val end
+  return "GigaCore 30i"
 end
 
 --------------------------------------------------------------------------------
@@ -219,11 +189,6 @@ end
 --------------------------------------------------------------------------------
 -- Layout constants (shared between info.lua and layout.lua)
 --------------------------------------------------------------------------------
--- Port Link visual: bright green when link up, dim green when link down.
--- (Was identical in the legacy plugin; we now distinguish so the ethercon
--- ring hider can mirror the actual rendered color and blend cleanly.)
-LINK_OFF = {30, 110, 30, 200}
-LINK_ON  = {0, 255, 0, 200}
 GROUPBOX_FILL_COLOR    = {12, 21, 42}
 GROUPBOX_STROKE_COLOR  = {0, 0, 0}
 GROUPBOX_STROKE_WIDTH  = 0
@@ -250,6 +215,8 @@ state = {
   trunkList       = {},   -- [{id, name, color, predefined}] ordered as returned
   ports           = {},
   darkMode        = false,
+  chassis         = nil,  -- chassisGeometry(Properties["Model"]), set by runtime.lua
+  cardSvg         = {},   -- port -> last card SVG written to Port.Card N
 }
 
 --------------------------------------------------------------------------------
@@ -259,10 +226,17 @@ function getPortState(port)
   state.ports[port] = state.ports[port] or {
     enabled        = true,
     link           = false,
-    memberOf       = nil,
+    memberOf       = nil,    -- "Group: N" / "Trunk: N", nil for type none
+    memberOfKnown  = false,  -- the switch has reported member_of (none included)
     poe            = nil,
     poeEnabled     = nil,
-    rlinkx         = nil,
+    rlinkx         = nil,    -- pin mapping: "enabled" | "active" | "disabled"
+    linkState      = nil,    -- raw link_state ("1gbps fdx", "down", ...)
+    rlinkxState    = nil,    -- raw RLinkX state machine value ("redundant", ...)
+    rlinkxEnabled  = nil,    -- per-port RLinkX config flag
+    mr             = false,  -- IGMP snooping router port
+    rstpRole       = nil,    -- RSTP role ("root", "designated", ...)
+    multilinkx     = nil,    -- "active" | "member" | nil (MultiLinkX LAG)
     speed          = nil,
     lastValidSpeed = nil,
     speedPending   = false,
@@ -416,34 +390,20 @@ function getThemeColors()
 end
 
 --------------------------------------------------------------------------------
--- Trunk badge: a 6 px triangle filling its button's inner box, drawn as
--- Legend IconData (the PSU icon mechanism). A "◤" glyph sat ~3 px off the
--- halo corner because of the font's side bearings. The top-left corner
--- follows the halo's CornerRadius 3 so the triangle hugs the rounded card
--- corner (viewBox units = screen pixels).
---------------------------------------------------------------------------------
-local trunkBadgeLegends = {}
-
-function trunkBadgeLegend(color)
-  if not trunkBadgeLegends[color] then
-    local svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 6 6\"><path fill=\"" .. color
-      .. "\" d=\"M0,3C0,1.343 1.343,0 3,0H6L0,6Z\"/></svg>"
-    trunkBadgeLegends[color] = '{"DrawChrome":false,"IconData":"' .. Crypto.Base64Encode(svg) .. '","Legend":""}'
-  end
-  return trunkBadgeLegends[color]
-end
-
---------------------------------------------------------------------------------
 -- Port UI Renderer (UI ONLY)
 --------------------------------------------------------------------------------
 function renderPortUI(port)
+  -- A REST snapshot setting several fields of one port renders it once at
+  -- the end (state.renderHeld, see applyPortObject / syncPoePorts).
+  if state.renderHeld then return end
   local p = getPortState(port)
   local theme = getThemeColors()
 
-  -- Port body color encodes the active link speed (Araneo convention):
+  -- Port.Link N: output pin, not laid out (the web UI card draws the link).
+  -- Boolean = link up; its Color follows the link speed:
   --   Link down / unknown → dim (page bg)
   --   10 Mbps / 100 Mbps   → orange
-  --   1 / 2.5 / 10 / 25 / 40 Gbps → green
+  --   1 / 10 / 25 / 40 Gbps → green
   local linkCtrl = Controls["Port.Link " .. port]
   if linkCtrl then
     linkCtrl.Boolean = (p.link == true)
@@ -468,11 +428,10 @@ function renderPortUI(port)
     enableToggle.Boolean = (p.enabled == true)
   end
 
-  -- Group / trunk color. Live API color preferred, predefined palette
-  -- fallback, transparent if unassigned. Disabled ports render the halo
-  -- in solid black (Araneo convention).
+  -- Group / trunk color for the Port.Group cell of the port-settings grid.
+  -- Live API color preferred, predefined palette fallback, transparent if
+  -- unassigned, black on a disabled port.
   local memberOf  = p.memberOf
-  local isTrunk   = memberOf and memberOf:sub(1, 6) == "Trunk:"
   local groupColor = (state.customColors and state.customColors[memberOf])
                     or GROUP_COLORS[memberOf]
   local groupHex
@@ -482,19 +441,11 @@ function renderPortUI(port)
     groupHex = groupColor and rgbHex(groupColor) or "#00000000"
   end
 
-  -- Label control below the port (non-overlay mode).
+  -- Port.Group Color N: internal control, not laid out, no pin.
   local groupCtrl = Controls["Port.Group Color " .. port]
   if groupCtrl then
     groupCtrl.Color  = groupHex
     groupCtrl.String = memberOf or ""
-  end
-
-  -- Group-color halo behind port (SVG overlay mode). Text — backup pattern:
-  -- runtime .Color = hex paints the fill, .String = " " keeps it renderable.
-  local bgCtrl = Controls["Port Bg" .. port]
-  if bgCtrl then
-    bgCtrl.Color  = groupHex
-    bgCtrl.String = " "
   end
 
   -- Port.Group cell — Button colored with group color, Legend = name.
@@ -506,23 +457,9 @@ function renderPortUI(port)
     groupBtn.Legend = memberOfDisplayName(memberOf)
   end
 
-  -- Port number lives in the Port.Link Legend (so it also shows offline).
-  -- Blank it when the port is disabled: the X marker replaces it.
+  -- Port.Link Legend: the port number, blank on a disabled port.
   if linkCtrl then
     linkCtrl.Legend = (p.enabled == false) and "" or tostring(port)
-  end
-
-  -- Disabled-port red X marker
-  local xCtrl = Controls["Port.zz Disabled X " .. port]
-  if xCtrl then
-    xCtrl.String = (p.enabled == false) and "✕" or ""
-  end
-
-
-  -- Trunk badge: corner triangle only when the port belongs to a trunk
-  local trunkBadge = Controls["Port.Trunk Badge " .. port]
-  if trunkBadge then
-    trunkBadge.Legend = isTrunk and trunkBadgeLegend(rgbHex(theme.trunkBadge)) or ""
   end
 
   local poeLabel = Controls["PoE.Indication " .. port]
@@ -531,7 +468,8 @@ function renderPortUI(port)
   end
 
   -- Without the PoE licence ("poe" missing from the /api/features active
-  -- list) no pip and no toggle state, whatever /api/poe/ports reports.
+  -- list) no toggle color and no toggle state, whatever /api/poe/ports
+  -- reports.
   local poeLicensed = state.hasPoe ~= false
   local poeKey = poeLicensed and (p.poe or ""):lower() or ""
   local poeColorMap = {
@@ -539,19 +477,6 @@ function renderPortUI(port)
     enabled  = theme.poeEnabled,
     disabled = theme.poeDisabled,
   }
-
-  -- PoE pip on the main chassis: Button sharing the Port.Link layer. We set
-  -- Color to the state hex and Boolean=true so Q-SYS paints Color (not the
-  -- transparent OffColor). For no PoE / disabled we leave Boolean=false so
-  -- OffColor (transparent) shows and the pip is invisible.
-  local poeBox = Controls["Port.PoE Color " .. port]
-  if poeBox then
-    local c = poeColorMap[poeKey]
-    local hex = c and rgbHex(c) or "#00000000"
-    poeBox.Color = hex
-    pcall(function() poeBox.OffColor = hex end)
-    poeBox.Boolean = (c ~= nil)
-  end
 
   local poeToggle = Controls["PoE.Toggle " .. port]
   if poeToggle then
@@ -561,8 +486,9 @@ function renderPortUI(port)
     poeToggle.Legend = (poeKey == "sourcing") and "⚡" or ""
   end
 
-  -- RLinkX bar (visible indicator near bottom of port): cyan when enabled,
-  -- darker blue when active, transparent when disabled.
+  -- RLinkX.Bar N and RLinkX.Edge <side> N: internal controls, not laid out
+  -- (the card's jack border shows RLinkX). Cyan when enabled, blue when
+  -- active, grey when disabled.
   local rlinkColorMap = {
     enabled  = theme.rlinkxEnabled,
     active   = theme.rlinkxActive,
@@ -579,31 +505,9 @@ function renderPortUI(port)
     rlink.String = ""
   end
 
-  -- RLinkX ring — paint all 4 edge strips the same color to form a border.
-  -- Used on RJ45 ports.
   for _, edge in ipairs({ "Top", "Bottom", "Left", "Right" }) do
     local c = Controls["RLinkX.Edge " .. edge .. " " .. port]
     if c then c.Color = rlinkHex end
-  end
-
-  -- RLinkX circular ring — used on ethercon ports. Outer fill = rlinkx color;
-  -- inner hider = button color so only a ring shows between them.
-  local ringFill = Controls["RLinkX.Ring Fill " .. port]
-  if ringFill then ringFill.Color = rlinkHex end
-
-  -- RLinkX ring (SVG overlay mode) — middle Button layer behind Port.Link.
-  -- Renders as a ring because Port.Link (smaller, front) covers the middle.
-  local rlinkRing = Controls["Port RlinkX " .. port]
-  if rlinkRing then
-    -- Always show the ring (disabled shows light grey, enabled cyan, active blue).
-    rlinkRing.Boolean = true
-    rlinkRing.Color = rlinkHex
-    pcall(function() rlinkRing.OffColor = rlinkHex end)
-  end
-
-  local ringHider = Controls["RLinkX.Ring Hider " .. port]
-  if ringHider then
-    ringHider.Color = (p.link == true) and rgbHex(LINK_ON) or rgbHex(LINK_OFF)
   end
 
   local rlinkToggle = Controls["RLinkX.Toggle " .. port]
@@ -629,6 +533,57 @@ function renderPortUI(port)
     speedCell.Legend = (p.enabled == false) and "Disabled" or tostring(p.speed or "")
     speedCell.Color  = hex
     pcall(function() speedCell.OffColor = hex end)
+  end
+
+  -- Web UI card on the chassis. Re-encoded only when its SVG changed: the
+  -- connect storm calls renderPortUI hundreds of times. Ports without a card
+  -- (plugin model smaller than the switch) are skipped.
+  local card = state.chassis and state.chassis.cards[port]
+  if card then
+    local svg = portCardSvg(portCardView(port, card))
+    if svg ~= state.cardSvg[port] then
+      state.cardSvg[port] = svg
+      Controls["Port.Card " .. port].Legend = iconLegend(svg)
+    end
+  end
+end
+
+-- Button Legend that draws an SVG through IconData (no chrome, no text).
+function iconLegend(svg)
+  return '{"DrawChrome":false,"IconData":"' .. Crypto.Base64Encode(svg) .. '","Legend":""}'
+end
+
+-- 10G frames (Chassis.10G N, one per tenG group in layout order): shown while
+-- the 10g licence is active. Painted only when that changes (state.tenGShown).
+function refreshTenGFrames()
+  if not state.chassis or state.tenGShown == state.has10g then return end
+  state.tenGShown = state.has10g
+  local index = 0
+  for _, frame in ipairs(state.chassis.frames) do
+    if frame.tenG then
+      index = index + 1
+      Controls["Chassis.10G " .. index].Legend = state.has10g and iconLegend(tenGFrameSvg(frame)) or ""
+    end
+  end
+end
+
+-- Blank every card and 10G frame so the offline chassis graphic shows: at
+-- runtime start (Designer keeps the last runtime Legend, which would show a
+-- previous session as current) and when the WebSocket drops (the web UI's
+-- not-live look). The next snapshot rewrites them all.
+function clearPortCards()
+  state.cardSvg = {}
+  state.tenGShown = nil
+  for port = 1, (state.portCount or 0) do
+    Controls["Port.Card " .. port].Legend = ""
+  end
+  if not state.chassis then return end
+  local index = 0
+  for _, frame in ipairs(state.chassis.frames) do
+    if frame.tenG then
+      index = index + 1
+      Controls["Chassis.10G " .. index].Legend = ""
+    end
   end
 end
 
@@ -716,6 +671,9 @@ function subscribeAllSystem()
 
   -- IGMP snooping router ports (VLAN 1 is the typical default)
   state.ws:Write('{"subscription":{"path":"/snooping/vlan/1/router_ports","action":"add","method":"changes"}}')
+
+  -- MultiLinkX LAGs: any notification re-reads the whole list (scheduleLagSync)
+  state.ws:Write('{"subscription":{"path":"/ports/lags/lag","action":"add","method":"changes"}}')
 end
 
 -- Subscribe to /groups/group/N/name notifications for IDs 1..MAX_GROUPS so
@@ -784,7 +742,7 @@ function fetchDeviceInfo()
       local raw = body:match('"model"%s*:%s*"([^"]+)"')
       if not raw then return end
       local name = matchModel(raw)
-      local selected = Properties["Model"].Value
+      local selected = resolveModel(Properties)
       local ctrl = Controls["Device.Model"]
       if name == selected then
         stopModelPulse()
@@ -850,13 +808,8 @@ function syncRlinkxState()
       log("GET /api/rlinkx => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       for portNum, stateStr in body:gmatch('"port_number"%s*:%s*(%d+)%s*,%s*"state"%s*:%s*"([^"]+)"') do
-        local mapped
-        if     stateStr == "redundant"     then mapped = "active"
-        elseif stateStr == "non-redundant" then mapped = "enabled"
-        else                                    mapped = "disabled"
-        end
         local n = tonumber(portNum)
-        if n and n <= (state.portCount or 0) then SetPortRlinkx(n, mapped) end
+        if n and n <= (state.portCount or 0) then SetPortRlinkxState(n, stateStr) end
       end
     end,
   }
@@ -879,6 +832,7 @@ local function applyPortObject(elem)
   local top, nested = splitNested(elem)
   local port = tonumber(top:match('"port_number"%s*:%s*(%d+)'))
   if not port or port > (state.portCount or 0) then return end
+  state.renderHeld = true
 
   local ptype = top:match('"type"%s*:%s*"(%w+)"')
   if ptype then getPortState(port).portType = ptype end
@@ -887,7 +841,7 @@ local function applyPortObject(elem)
   if enabled then SetPortEnabled(port, enabled == "true") end
 
   local link = top:match('"link_state"%s*:%s*"([^"]*)"')
-  if link then SetPortLink(port, link ~= "down" and link ~= "unknown") end
+  if link then SetPortLinkState(port, link) end
 
   local legend = top:match('"legend"%s*:%s*"([^"]*)"')
   if legend then
@@ -923,13 +877,10 @@ local function applyPortObject(elem)
 
   if nested.rlinkx then
     local flag = nested.rlinkx:match('"enabled"%s*:%s*(%a+)')
-    local current = getPortState(port).rlinkx
-    if flag == "true" then
-      if current ~= "active" then SetPortRlinkx(port, "enabled") end
-    elseif flag == "false" then
-      SetPortRlinkx(port, "disabled")
-    end
+    if flag == "true" or flag == "false" then SetPortRlinkxEnabled(port, flag == "true") end
   end
+  state.renderHeld = false
+  renderPortUI(port)
 end
 
 function syncAllPorts()
@@ -963,10 +914,13 @@ function syncPoePorts()
         local top = splitNested(elem)
         local port = tonumber(top:match('"port_number"%s*:%s*(%d+)'))
         if port and port <= (state.portCount or 0) then
+          state.renderHeld = true
           local enabled = top:match('"enabled"%s*:%s*(%a+)')
           if enabled then SetPortPoeEnabled(port, enabled == "true") end
           local ind = top:match('"indication"%s*:%s*"([^"]*)"')
           if ind then SetPortIndication(port, ind) end
+          state.renderHeld = false
+          renderPortUI(port)
         end
       end
     end,
@@ -976,7 +930,9 @@ end
 -- /api/features: "10g" in the active list means the 10 G licence is on,
 -- which decides whether SFP ports may be set to 10 Gbps. "poe" in the
 -- active list is the PoE licence ("supported" only says it can be bought);
--- without it renderPortUI shows no PoE pip or toggle state.
+-- without it renderPortUI shows no PoE pip or toggle state. "fiber" in
+-- "supported" but not in "active" draws the rfib ports as not present; old
+-- firmware (v1.1.0) has no "supported" list.
 function syncFeatures()
   HttpClient.Get {
     Url     = string.format("http://%s/api/features", state.baseIP),
@@ -989,14 +945,61 @@ function syncFeatures()
       log("GET /api/features => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local active = body:match('"active"%s*:%s*(%b[])') or ""
+      local supported = body:match('"supported"%s*:%s*(%b[])') or ""
       state.has10g = active:find('"10g"', 1, true) ~= nil
-      local hadPoe = state.hasPoe
+      refreshTenGFrames()
+      local before = { state.hasPoe, state.fiberPossible, state.fiberActive }
       state.hasPoe = active:find('"poe"', 1, true) ~= nil
-      if state.hasPoe ~= hadPoe then
+      state.fiberPossible = supported:find('"fiber"', 1, true) ~= nil
+      state.fiberActive = active:find('"fiber"', 1, true) ~= nil
+      if state.hasPoe ~= before[1] or state.fiberPossible ~= before[2] or state.fiberActive ~= before[3] then
         for port = 1, (state.portCount or 0) do renderPortUI(port) end
       end
     end,
   }
+end
+
+-- MultiLinkX: /api/ports/lags/lag => [{"port_number":66,"link_state":"up",
+-- "members":[25,26],"active_members":[25]},..]. A port in any active_members
+-- gets the white bar, a port only in members the magenta one.
+function syncLags()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/ports/lags/lag", state.baseIP),
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    Timeout = 10,
+    EventHandler = function(_tbl, code, body, err)
+      log("GET /api/ports/lags/lag => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      local roles = {}
+      for lag in body:gmatch("%b{}") do
+        local members = lag:match('"members"%s*:%s*(%b[])') or ""
+        local active  = lag:match('"active_members"%s*:%s*(%b[])') or ""
+        for n in members:gmatch("%d+") do
+          local port = tonumber(n)
+          roles[port] = roles[port] or "member"
+        end
+        for n in active:gmatch("%d+") do roles[tonumber(n)] = "active" end
+      end
+      for port = 1, (state.portCount or 0) do
+        local p = getPortState(port)
+        if p.multilinkx ~= roles[port] then
+          p.multilinkx = roles[port]
+          renderPortUI(port)
+        end
+      end
+    end,
+  }
+end
+
+-- One LAG change arrives as one notification per changed field: the burst
+-- re-reads the list once, 0.5 s after its first notification.
+function scheduleLagSync()
+  if state.lagSyncPending then return end
+  state.lagSyncPending = true
+  Timer.CallAfter(function()
+    state.lagSyncPending = false
+    syncLags()
+  end, 0.5)
 end
 
 function reconcileAll()
@@ -1006,6 +1009,7 @@ function reconcileAll()
   syncFeatures()
   syncPoePorts()
   syncRlinkxState()
+  syncLags()
   fetchCustomColors()
   syncPowerStatus()
   syncSpanningTree()
@@ -1339,6 +1343,7 @@ function openWS(ip)
       updateAuthStatus("Auth failed", "#C80000")
     end
     SetDeviceStatus("offline")
+    clearPortCards()
     scheduleReconnect()
   end
 
@@ -1347,6 +1352,7 @@ function openWS(ip)
     log("WebSocket Closed")
     stopPollTimer()
     SetDeviceStatus("offline")
+    clearPortCards()
     scheduleReconnect()
   end
 
@@ -1564,7 +1570,7 @@ function handlePortPath(path, raw)
 
   if path == ("/ports/port/" .. port .. "/link_state") then
     local v = extractString(raw)
-    if v then SetPortLink(port, v ~= "down" and v ~= "unknown") end
+    if v then SetPortLinkState(port, v) end
     return true
   end
 
@@ -1586,7 +1592,8 @@ function handlePortPath(path, raw)
   end
 
   if path == ("/poe/ports/" .. port .. "/indication") then
-    local v = extractString(raw)
+    -- "" is a real value (web UI: same grey as disabled), unlike extractString.
+    local v = raw:match('"new_value"%s*:%s*"([^"]*)"')
     if v then SetPortIndication(port, v) end
     return true
   end
@@ -1602,29 +1609,16 @@ function handlePortPath(path, raw)
     -- enabled here; the "active" (redundant) state comes from /rlinkx/ports/N/state.
     local obj = raw:match('"new_value"%s*:%s*{(.-)}')
     if obj then
-      local enabledFlag = obj:match('"enabled"%s*:%s*(%a+)')
-      -- Don't downgrade if we already know the port is "active"
-      local current = getPortState(port).rlinkx
-      if enabledFlag == "true" then
-        if current ~= "active" then SetPortRlinkx(port, "enabled") end
-      else
-        SetPortRlinkx(port, "disabled")
-      end
+      SetPortRlinkxEnabled(port, obj:match('"enabled"%s*:%s*(%a+)') == "true")
     end
     return true
   end
 
   if path == ("/rlinkx/ports/" .. port .. "/state") then
-    -- State machine values: "disabled" / "non-redundant" / "redundant"
+    -- State machine values: disabled, non-redundant, redundant,
+    -- partial-redundant, invalid-version
     local v = extractString(raw)
-    if v then
-      local mapped
-      if     v == "redundant"     then mapped = "active"
-      elseif v == "non-redundant" then mapped = "enabled"
-      else                              mapped = "disabled"
-      end
-      SetPortRlinkx(port, mapped)
-    end
+    if v then SetPortRlinkxState(port, v) end
     return true
   end
 
@@ -1652,6 +1646,7 @@ function parseNotification(raw)
   if not path then return end
   if handleDevicePath(path, raw)       then return end
   if handleGroupPath(path, raw)        then return end
+  if path:find("^/ports/lags/lag")     then scheduleLagSync() return end
   if handlePortPath(path, raw)         then return end
   if handleSystemPath(path, raw)       then return end
   if handleFanPath(path, raw)          then return end
@@ -1663,8 +1658,11 @@ end
 --------------------------------------------------------------------------------
 -- Port state setters (STATE → UI)
 --------------------------------------------------------------------------------
-function SetPortLink(port, isOn)
-  getPortState(port).link = isOn
+-- Raw link_state ("1gbps fdx", "100mbps hdx", "down", "unknown").
+function SetPortLinkState(port, raw)
+  local p = getPortState(port)
+  p.linkState = raw
+  p.link = raw ~= "down" and raw ~= "unknown"
   renderPortUI(port)
 end
 
@@ -1674,7 +1672,9 @@ function SetPortEnabled(port, enabled)
 end
 
 function SetPortMemberOf(port, textVal)
-  getPortState(port).memberOf = textVal
+  local p = getPortState(port)
+  p.memberOf = textVal
+  p.memberOfKnown = true
   renderPortUI(port)
 end
 
@@ -1683,8 +1683,29 @@ function SetPortIndication(port, textVal)
   renderPortUI(port)
 end
 
-function SetPortRlinkx(port, stateString)
-  getPortState(port).rlinkx = stateString
+-- RLinkX state machine value (/rlinkx/ports/N/state, GET /api/rlinkx). The
+-- pin mapping keeps "active" for redundant, "enabled" for non-redundant and
+-- "disabled" for everything else.
+function SetPortRlinkxState(port, raw)
+  local p = getPortState(port)
+  p.rlinkxState = raw
+  if     raw == "redundant"     then p.rlinkx = "active"
+  elseif raw == "non-redundant" then p.rlinkx = "enabled"
+  else                               p.rlinkx = "disabled"
+  end
+  renderPortUI(port)
+end
+
+-- Per-port RLinkX config flag (/ports/port/N/rlinkx, GET /api/ports). Enabling
+-- does not downgrade a port the state machine already reports as active.
+function SetPortRlinkxEnabled(port, enabled)
+  local p = getPortState(port)
+  p.rlinkxEnabled = enabled
+  if not enabled then
+    p.rlinkx = "disabled"
+  elseif p.rlinkx ~= "active" then
+    p.rlinkx = "enabled"
+  end
   renderPortUI(port)
 end
 
@@ -1860,45 +1881,26 @@ function SetRootBridgePriority(pri)
   refreshRootBridge()
 end
 
--- RSTP role per port; only "root" is drawn, as an "R" badge at the
--- bottom-left of the port (Port.zRoot N, same style as the MR badge).
+-- RSTP role per port; only "root" is drawn, as the "R" badge inside the
+-- port card (portCardView root).
 function SetPortRstpRole(port, role)
-  local c = Controls["Port.zRoot " .. port]
-  if not c then return end
-  local isRoot = (role == "root")
-  local fill   = isRoot and "#101828" or "#00000000"
-  c.Boolean = isRoot
-  c.Color   = fill
-  pcall(function() c.OffColor = fill end)
-  pcall(function() c.StrokeColor = isRoot and "#FFFFFF" or "#00000000" end)
-  c.Legend = isRoot and "R" or ""
+  local p = getPortState(port)
+  if p.rstpRole == role then return end
+  p.rstpRole = role
+  renderPortUI(port)
 end
 
+-- IGMP snooping router ports; the MR badge is drawn inside the port card.
 function SetMrPorts(portList)
-  -- Port.MR is a Button in the SVG overlay layout (top-right corner of each
-  -- port). When set: black square with white border + "MR" text. When clear:
-  -- transparent (no border showing).
-  for p = 1, state.portCount do
-    local c = Controls["Port.zMR " ..p]
-    if c then
-      c.Boolean = false
-      c.Color = "#00000000"
-      pcall(function() c.OffColor = "#00000000" end)
-      pcall(function() c.StrokeColor = "#00000000" end)
-      c.Legend = ""
-    end
-  end
+  local routerPorts = {}
   if type(portList) == "table" then
-    for _, p in ipairs(portList) do
-      local id = tonumber(p)
-      local c = Controls["Port.zMR " ..id]
-      if c then
-        c.Boolean = true
-        c.Color = "#101828"
-        pcall(function() c.OffColor = "#101828" end)
-        pcall(function() c.StrokeColor = "#FFFFFF" end)
-        c.Legend = "MR"
-      end
+    for _, p in ipairs(portList) do routerPorts[tonumber(p)] = true end
+  end
+  for port = 1, state.portCount do
+    local p = getPortState(port)
+    if p.mr ~= (routerPorts[port] == true) then
+      p.mr = routerPorts[port] == true
+      renderPortUI(port)
     end
   end
 end
