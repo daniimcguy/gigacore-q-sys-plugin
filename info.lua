@@ -73,6 +73,32 @@ function getPortCount(model)
   return GigaCoreModels[model] or 30
 end
 
+-- Fans, PSU slots and case temperature sensor per model (largest counts in
+-- 1137 support-package api.json records; the S30-I is assumed like the 30i).
+-- The fan, PSU and case temperature pins follow these counts.
+MODEL_HARDWARE = {
+  ["GigaCore 30i"]    = { fans = 3, psus = 2, caseTemp = true },
+  ["GigaCore S30-I"]  = { fans = 3, psus = 2, caseTemp = true },
+  ["GigaCore O26-I"]  = { fans = 3, psus = 2, caseTemp = true },
+  ["GigaCore 20t"]    = { fans = 2, psus = 2, caseTemp = true },
+  ["GigaCore 18t"]    = { fans = 2, psus = 2, caseTemp = true },
+  ["GigaCore 16t"]    = { fans = 2, psus = 2, caseTemp = true },
+  ["GigaCore 16tf"]   = { fans = 2, psus = 2, caseTemp = true },
+  ["GigaCore 16i"]    = { fans = 2, psus = 2, caseTemp = true },
+  ["GigaCore 10t"]    = { fans = 2, psus = 1, caseTemp = true },
+  ["GigaCore 10t-IP"] = { fans = 0, psus = 1, caseTemp = false },
+  ["GigaCore 10i"]    = { fans = 1, psus = 1, caseTemp = true },
+}
+
+function getModelHardware(model)
+  return MODEL_HARDWARE[model] or MODEL_HARDWARE["GigaCore 30i"]
+end
+
+function getPoeCount(model)
+  local l = PORT_LAYOUT[model]
+  return (l and l.poe) or 0
+end
+
 function getRJ45Count(model)
   local l = PORT_LAYOUT[model]
   return (l and l.rj45) or 0
@@ -217,6 +243,7 @@ state = {
   darkMode        = false,
   chassis         = nil,  -- chassisGeometry(Properties["Model"]), set by runtime.lua
   cardSvg         = {},   -- port -> last card SVG written to Port.Card N
+  pendingWrites   = {},   -- scheduleWrite key -> true while its 0.2 s window is open
 }
 
 --------------------------------------------------------------------------------
@@ -225,13 +252,17 @@ state = {
 function getPortState(port)
   state.ports[port] = state.ports[port] or {
     enabled        = true,
-    link           = false,
     memberOf       = nil,    -- "Group: N" / "Trunk: N", nil for type none
     memberOfKnown  = false,  -- the switch has reported member_of (none included)
     poe            = nil,
     poeEnabled     = nil,
-    rlinkx         = nil,    -- pin mapping: "enabled" | "active" | "disabled"
+    portType       = nil,    -- raw type ("rj45", "sfp")
+    rxBitRate      = nil,    -- counters from GET /api/ports
+    txBitRate      = nil,
+    linkFlaps      = nil,
     linkState      = nil,    -- raw link_state ("1gbps fdx", "down", ...)
+    linkSpeedMode  = nil,    -- raw link_speed mode ("auto", "fixed")
+    linkSpeedList  = nil,    -- link_speed speed[] joined with ", " ("all", "1gbps fdx, 100mbps fdx")
     rlinkxState    = nil,    -- raw RLinkX state machine value ("redundant", ...)
     rlinkxEnabled  = nil,    -- per-port RLinkX config flag
     mr             = false,  -- IGMP snooping router port
@@ -242,6 +273,159 @@ function getPortState(port)
     speedPending   = false,
   }
   return state.ports[port]
+end
+
+--------------------------------------------------------------------------------
+-- Pin writers. A control the selected model does not declare (Controls[name]
+-- is nil: a port, PoE port, fan or PSU the model lacks) is skipped.
+--------------------------------------------------------------------------------
+function setPinString(name, value)
+  local c = Controls[name]
+  if c then c.String = value or "" end
+end
+
+function setPinValue(name, number)
+  local c = Controls[name]
+  local n = tonumber(number)
+  if c and n then c.Value = n end
+end
+
+function setPinBoolean(name, value)
+  local c = Controls[name]
+  if c then c.Boolean = (value == true) end
+end
+
+-- Every per-port pin from the port state, raw API values.
+function renderPortPins(port)
+  local p = getPortState(port)
+  local base = "Ports.Port " .. port .. "."
+  setPinBoolean(base .. "Enabled", p.enabled)
+  setPinString(base .. "Link State", p.linkState)
+  setPinString(base .. "Type", p.portType)
+  setPinBoolean(base .. "RLinkX.Enabled", p.rlinkxEnabled)
+  setPinValue(base .. "Counters.Rx Bit Rate", p.rxBitRate)
+  setPinValue(base .. "Counters.Tx Bit Rate", p.txBitRate)
+  setPinValue(base .. "Counters.Link Flaps", p.linkFlaps)
+
+  -- PoE pins (declared for the model's PoE ports only). The enabled pin
+  -- stays off without the PoE licence; an indication of "" is a value.
+  local poe = "PoE.Port " .. port .. "."
+  setPinBoolean(poe .. "Enabled", state.hasPoe ~= false and p.poeEnabled == true)
+  setPinString(poe .. "Indication", p.poe)
+
+  -- A pair with a write pending keeps the values the script just wrote:
+  -- the PUT reads them when its window closes.
+  if not state.pendingWrites["speed " .. port] then
+    setPinString(base .. "Link Speed.Mode", p.linkSpeedMode)
+    setPinString(base .. "Link Speed.Speed", p.linkSpeedList)
+  end
+  if not state.pendingWrites["member " .. port] then
+    -- "Group: 22" -> group / 22, "Trunk: 1" -> trunk / 1, reported without a
+    -- membership -> none / 0, never reported -> "" / 0.
+    local kind, id = "", 0
+    if p.memberOf then
+      local word, number = p.memberOf:match("^(%a+): (%d+)$")
+      kind, id = word and word:lower() or "", tonumber(number) or 0
+    elseif p.memberOfKnown then
+      kind = "none"
+    end
+    setPinString(base .. "Member Of.Type", kind)
+    setPinValue(base .. "Member Of.Id", id)
+  end
+end
+
+-- Port state key of a membership ("Group: 22", "Trunk: 1"), nil for none.
+function memberOfKey(kind, id)
+  if kind == "group" and id then return string.format("Group: %d", id) end
+  if kind == "trunk" and id then return string.format("Trunk: %d", id) end
+  return nil
+end
+
+-- link_speed speed[] array text ('["1gbps fdx","100mbps fdx"]') -> the
+-- Link Speed.Speed pin text ("1gbps fdx, 100mbps fdx"); nil stays nil.
+function speedListFromArray(arrayText)
+  if not arrayText then return nil end
+  local tokens = {}
+  for token in arrayText:gmatch('"([^"]*)"') do tokens[#tokens + 1] = token end
+  return table.concat(tokens, ", ")
+end
+
+-- Pair pins (Link Speed Mode / Speed, Member Of Type / Id) form one API
+-- object: the first write arms a 0.2 s window per key, writes inside it are
+-- absorbed, and fn reads both pins when it fires.
+function scheduleWrite(key, fn)
+  if state.pendingWrites[key] then return end
+  state.pendingWrites[key] = true
+  Timer.CallAfter(function()
+    state.pendingWrites[key] = nil
+    fn()
+  end, 0.2)
+end
+
+local function trim(s)
+  return (s or ""):match("^%s*(.-)%s*$")
+end
+
+local function pinText(name)
+  local c = Controls[name]
+  return c and c.String or ""
+end
+
+-- PUT one port object; a rejected write logs the API reason and puts the
+-- pins back to the switch's values.
+local function putPortObject(port, field, body, onSuccess)
+  HttpClient.Upload {
+    Url     = string.format("http://%s/api/ports/port/%d/%s", state.baseIP, port, field),
+    Method  = "PUT",
+    Data    = body,
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    EventHandler = function(_tbl, code, response, err)
+      log("PUT " .. field .. " port " .. port .. " " .. body .. " => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code == 200 then
+        if onSuccess then onSuccess() end
+        return
+      end
+      local reason = (type(response) == "string") and response:match('"reason"%s*:%s*"([^"]*)"') or nil
+      log(field .. " rejected on port " .. port .. (reason and (": " .. reason) or ""))
+      renderPortPins(port)
+    end,
+  }
+end
+
+-- Link Speed pins -> PUT /api/ports/port/N/link_speed. The Speed text splits
+-- on ",", tokens trimmed, empty ones dropped.
+function putPortLinkSpeed(port)
+  local base = "Ports.Port " .. port .. ".Link Speed."
+  local mode = trim(pinText(base .. "Mode"))
+  local tokens = {}
+  for piece in pinText(base .. "Speed"):gmatch("[^,]+") do
+    local token = trim(piece)
+    if token ~= "" then tokens[#tokens + 1] = jsonString(token) end
+  end
+  if state.baseIP == "" or mode == "" or #tokens == 0 then
+    renderPortPins(port)
+    return
+  end
+  putPortObject(port, "link_speed",
+    '{"mode":' .. jsonString(mode) .. ',"speed":[' .. table.concat(tokens, ",") .. ']}')
+end
+
+-- Member Of pins -> PUT /api/ports/port/N/member_of; a 200 updates the port
+-- state (the WS notification may lag).
+function putPortMemberOf(port)
+  local base = "Ports.Port " .. port .. ".Member Of."
+  local kind = trim(pinText(base .. "Type"))
+  local idCtrl = Controls[base .. "Id"]
+  local id = math.floor(tonumber(idCtrl and idCtrl.Value) or 0)
+  if state.baseIP == "" or kind == "" then
+    renderPortPins(port)
+    return
+  end
+  local body = (kind == "none") and '{"type":"none"}'
+            or string.format('{"type":%s,"id":%d}', jsonString(kind), id)
+  putPortObject(port, "member_of", body, function()
+    SetPortMemberOf(port, memberOfKey(kind, id))
+  end)
 end
 
 --------------------------------------------------------------------------------
@@ -398,35 +582,7 @@ function renderPortUI(port)
   if state.renderHeld then return end
   local p = getPortState(port)
   local theme = getThemeColors()
-
-  -- Port.Link N: output pin, not laid out (the web UI card draws the link).
-  -- Boolean = link up; its Color follows the link speed:
-  --   Link down / unknown → dim (page bg)
-  --   10 Mbps / 100 Mbps   → orange
-  --   1 / 10 / 25 / 40 Gbps → green
-  local linkCtrl = Controls["Port.Link " .. port]
-  if linkCtrl then
-    linkCtrl.Boolean = (p.link == true)
-    local speedColor
-    if p.link ~= true then
-      speedColor = { 15, 22, 38, 255 }     -- near page bg
-    else
-      local s = tostring(p.speed or "")
-      if s:find("10 Mbps") or s:find("100 Mbps") or s:find("10mbps") or s:find("100mbps") then
-        speedColor = { 255, 140, 20, 220 } -- orange
-      else
-        speedColor = { 0, 200, 60, 220 }   -- green
-      end
-    end
-    linkCtrl.Color = rgbHex(speedColor)
-    pcall(function() linkCtrl.OffColor = rgbHex(speedColor) end)
-  end
-
-
-  local enableToggle = Controls["Port.Enable " .. port]
-  if enableToggle then
-    enableToggle.Boolean = (p.enabled == true)
-  end
+  renderPortPins(port)
 
   -- Group / trunk color for the Port.Group cell of the port-settings grid.
   -- Live API color preferred, predefined palette fallback, transparent if
@@ -441,13 +597,6 @@ function renderPortUI(port)
     groupHex = groupColor and rgbHex(groupColor) or "#00000000"
   end
 
-  -- Port.Group Color N: internal control, not laid out, no pin.
-  local groupCtrl = Controls["Port.Group Color " .. port]
-  if groupCtrl then
-    groupCtrl.Color  = groupHex
-    groupCtrl.String = memberOf or ""
-  end
-
   -- Port.Group cell — Button colored with group color, Legend = name.
   local groupBtn = Controls["Port.Group " .. port]
   if groupBtn then
@@ -457,19 +606,9 @@ function renderPortUI(port)
     groupBtn.Legend = memberOfDisplayName(memberOf)
   end
 
-  -- Port.Link Legend: the port number, blank on a disabled port.
-  if linkCtrl then
-    linkCtrl.Legend = (p.enabled == false) and "" or tostring(port)
-  end
-
-  local poeLabel = Controls["PoE.Indication " .. port]
-  if poeLabel then
-    poeLabel.String = p.poe or ""
-  end
-
   -- Without the PoE licence ("poe" missing from the /api/features active
-  -- list) no toggle color and no toggle state, whatever /api/poe/ports
-  -- reports.
+  -- list) no toggle color and no toggle state (renderPortPins), whatever
+  -- /api/poe/ports reports.
   local poeLicensed = state.hasPoe ~= false
   local poeKey = poeLicensed and (p.poe or ""):lower() or ""
   local poeColorMap = {
@@ -478,53 +617,13 @@ function renderPortUI(port)
     disabled = theme.poeDisabled,
   }
 
-  local poeToggle = Controls["PoE.Toggle " .. port]
+  local poeToggle = Controls["PoE.Port " .. port .. ".Enabled"]
   if poeToggle then
-    poeToggle.Boolean = poeLicensed and (p.poeEnabled == true)
     local c = poeColorMap[poeKey]
     poeToggle.Color  = c and rgbHex(c) or "#00000000"
     poeToggle.Legend = (poeKey == "sourcing") and "⚡" or ""
   end
 
-  -- RLinkX.Bar N and RLinkX.Edge <side> N: internal controls, not laid out
-  -- (the card's jack border shows RLinkX). Cyan when enabled, blue when
-  -- active, grey when disabled.
-  local rlinkColorMap = {
-    enabled  = theme.rlinkxEnabled,
-    active   = theme.rlinkxActive,
-    disabled = theme.rlinkxDisabled,
-  }
-  local rlinkHex = (function()
-    local c = rlinkColorMap[p.rlinkx] or theme.rlinkxDisabled
-    return rgbHex(c)
-  end)()
-
-  local rlink = Controls["RLinkX.Bar " .. port]
-  if rlink then
-    rlink.Color  = rlinkHex
-    rlink.String = ""
-  end
-
-  for _, edge in ipairs({ "Top", "Bottom", "Left", "Right" }) do
-    local c = Controls["RLinkX.Edge " .. edge .. " " .. port]
-    if c then c.Color = rlinkHex end
-  end
-
-  local rlinkToggle = Controls["RLinkX.Toggle " .. port]
-  if rlinkToggle then
-    rlinkToggle.Boolean = (p.rlinkx == "enabled" or p.rlinkx == "active")
-  end
-
-  -- RLinkX state output pin: "disabled" / "enabled" / "active"
-  local rlinkText = Controls["RLinkX.State " .. port]
-  if rlinkText then
-    rlinkText.String = p.rlinkx or ""
-  end
-
-  local speedCtrl = Controls["Port.Speed " .. port]
-  if speedCtrl and p.speed then
-    speedCtrl.String = p.speed
-  end
   -- "Disabled" is a picker choice, not an API speed: a disabled port shows
   -- it here while p.speed keeps the real link_speed for when it comes back.
   local speedCell = Controls["Port.Speed Cell " .. port]
@@ -624,9 +723,11 @@ function subscribeAllPorts()
   end
 
   state.ws:Write('{"subscription":{"path":"/device/name","action":"add","method":"changes"}}')
+  state.ws:Write('{"subscription":{"path":"/device/hostname","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/device/description","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/device/actual_ip/ip_address","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/device/actual_ip/prefix_length","action":"add","method":"changes"}}')
+  state.ws:Write('{"subscription":{"path":"/device/actual_ip/default_gateway","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/ip_settings/mode","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/device/mac_address","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/device/firmware/active","action":"add","method":"changes"}}')
@@ -638,8 +739,7 @@ end
 function subscribeAllSystem()
   if not state.ws then return end
 
-  -- CPU + case temps + CPU load
-  state.ws:Write('{"subscription":{"path":"/system/temperature/current","action":"add","method":"changes"}}')
+  -- CPU load, CPU and case temperatures
   state.ws:Write('{"subscription":{"path":"/system/cpu_load","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/system/cpu_load_long","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/temperatures/temperature/cpu/current","action":"add","method":"changes"}}')
@@ -660,6 +760,10 @@ function subscribeAllSystem()
   state.ws:Write('{"subscription":{"path":"/power/coupling/mode","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/power/coupling/state","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/power/total_power_usage","action":"add","method":"changes"}}')
+  state.ws:Write('{"subscription":{"path":"/power/total_power_max","action":"add","method":"changes"}}')
+
+  -- Switch-wide RLinkX flag
+  state.ws:Write('{"subscription":{"path":"/rlinkx/enabled","action":"add","method":"changes"}}')
 
   -- Spanning tree (default MST instance 0)
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/bridge_priority","action":"add","method":"changes"}}')
@@ -709,7 +813,7 @@ function matchModel(raw)
   return nil
 end
 
--- Device.Model flashes like the Offline badge while the Model property and
+-- Display.Model flashes like the Offline badge while the Model property and
 -- the switch disagree. One timer, reused across WebSocket reconnects.
 local function startModelPulse(ctrl)
   local bright = true
@@ -726,10 +830,11 @@ local function stopModelPulse()
   if state.modelPulseTimer then state.modelPulseTimer:Stop() end
 end
 
--- One-shot GET /api/device at connect. Device.Model shows the switch's model,
--- flashing red when the Model property names another one: the chassis layout
--- is frozen at design time, so the user has to pick the right model in the
--- plugin properties.
+-- One-shot GET /api/device at connect. Device.Model and Device.Hostname get
+-- the raw values; Display.Model shows the switch's model, flashing red when
+-- the Model property names another one: the chassis layout is frozen at
+-- design time, so the user has to pick the right model in the plugin
+-- properties.
 function fetchDeviceInfo()
   HttpClient.Get {
     Url     = string.format("http://%s/api/device", state.baseIP),
@@ -739,11 +844,15 @@ function fetchDeviceInfo()
     ),
     EventHandler = function(_tbl, code, body, _err)
       if code ~= 200 or not body then return end
+      updateGateway(body:match('"default_gateway"%s*:%s*"([^"]*)"'))
+      local hostname = body:match('"hostname"%s*:%s*"([^"]*)"')
+      if hostname then setPinString("Device.Hostname", hostname) end
       local raw = body:match('"model"%s*:%s*"([^"]+)"')
       if not raw then return end
+      setPinString("Device.Model", raw)
       local name = matchModel(raw)
       local selected = resolveModel(Properties)
-      local ctrl = Controls["Device.Model"]
+      local ctrl = Controls["Display.Model"]
       if name == selected then
         stopModelPulse()
         log("Device model detected => " .. name)
@@ -807,6 +916,10 @@ function syncRlinkxState()
     EventHandler = function(_tbl, code, body, err)
       log("GET /api/rlinkx => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
+      -- Top-level "enabled" (switch-wide flag), matched once ports[] is out
+      -- of the way.
+      local enabled = body:gsub("%b[]", "[]"):match('"enabled"%s*:%s*(%a+)')
+      if enabled == "true" or enabled == "false" then SetRlinkxEnabled(enabled == "true") end
       for portNum, stateStr in body:gmatch('"port_number"%s*:%s*(%d+)%s*,%s*"state"%s*:%s*"([^"]+)"') do
         local n = tonumber(portNum)
         if n and n <= (state.portCount or 0) then SetPortRlinkxState(n, stateStr) end
@@ -844,13 +957,13 @@ local function applyPortObject(elem)
   if link then SetPortLinkState(port, link) end
 
   local legend = top:match('"legend"%s*:%s*"([^"]*)"')
-  if legend then
-    local display = Controls["Port.Legend " .. port]
-    local edit    = Controls["Port.Legend Edit " .. port]
-    if display then
-      display.String = (#legend > 8) and (legend:sub(1, 8) .. " \n" .. legend:sub(9)) or legend
-    end
-    if edit then edit.String = legend end
+  if legend then setPinString("Ports.Port " .. port .. ".Legend", legend) end
+
+  if nested.counters then
+    local p = getPortState(port)
+    p.rxBitRate = tonumber(nested.counters:match('"rx_bit_rate"%s*:%s*(%d+)'))
+    p.txBitRate = tonumber(nested.counters:match('"tx_bit_rate"%s*:%s*(%d+)'))
+    p.linkFlaps = tonumber(nested.counters:match('"link_flaps"%s*:%s*(%d+)'))
   end
 
   if nested.member_of then
@@ -873,6 +986,7 @@ local function applyPortObject(elem)
     elseif mode == "fixed" and speed then
       SetPortSpeed(port, speed)
     end
+    SetPortLinkSpeedFields(port, mode, speedListFromArray(nested.link_speed:match('"speed"%s*:%s*(%b[])')))
   end
 
   if nested.rlinkx then
@@ -1032,9 +1146,11 @@ function syncPowerStatus()
       if code ~= 200 or type(body) ~= "string" then return end
       local total = body:match('"total_power_usage"%s*:%s*(%d+)')
       if total then SetTotalPower(total) end
-      -- psus[] lists only the powered sources: a slot missing from it is
-      -- painted "absent", and fewer sources than max_num_psus marks the
-      -- single-PSU install that refreshCoupling does not flag.
+      local max = body:match('"total_power_max"%s*:%s*(%d+)')
+      if max then SetTotalPowerMax(max) end
+      -- psus[] lists only the powered sources: a slot missing from it gets
+      -- "" pins and a grey icon, and fewer sources than max_num_psus marks
+      -- the single-PSU install that refreshCoupling does not flag.
       local psus = body:match('"psus"%s*:%s*(%b[])') or "[]"
       local maxPsus = tonumber(body:match('"max_num_psus"%s*:%s*(%d+)'))
       local count, seen = 0, {}
@@ -1046,14 +1162,19 @@ function syncPowerStatus()
           -- "fans":[{...,"state":..}] nests its own "state"; strip nested
           -- arrays and objects before matching the top-level scalars.
           local flat = obj:gsub("%b[]", "[]")
-          local usage = flat:match('"power_usage"%s*:%s*(%d+)')
-          local pstat = flat:match('"state"%s*:%s*"([^"]+)"')
-          if pstat then SetPsuStatus(id, pstat) end
+          local usage = flat:match('"power_usage"%s*:%s*(-?%d+)')
+          local pstat = flat:match('"state"%s*:%s*"([^"]*)"')
+          local power = flat:match('"power_status"%s*:%s*"([^"]*)"')
+          if pstat then SetPsuState(id, pstat) end
+          if power then SetPsuPowerStatus(id, power) end
           if usage then SetPsuPower(id, usage) end
         end
       end
       for id = 1, 2 do
-        if not seen[id] then SetPsuStatus(id, "absent") end
+        if not seen[id] then
+          SetPsuState(id, "")
+          SetPsuPowerStatus(id, "")
+        end
       end
       state.psuMissing = maxPsus ~= nil and count < maxPsus
       local coupling = body:match('"coupling"%s*:%s*(%b{})')
@@ -1379,15 +1500,29 @@ function paintHeaderBox(ctrl)
   pcall(function() ctrl.Color = rgbHex(theme.pageBg) end)
 end
 
+-- Display line "<ip>/<prefix> (<mode>)"; the raw values are the
+-- Device.Actual IP.* and IP Settings.Mode pins (handleDevicePath).
 function updateIPinfo()
   local ip   = (state.currentIP    ~= "" and state.currentIP)    or "???"
   local pref = (state.prefixLength ~= "" and state.prefixLength) or "??"
   local mode = (state.ipMode       ~= "" and state.ipMode)       or "???"
   local combined = string.format("%s/%s (%s)", ip, pref, mode)
-  if Controls["Device.IP Info"] then
-    Controls["Device.IP Info"].String = combined
-    paintHeaderBox(Controls["Device.IP Info"])
+  if Controls["Display.IP Info"] then
+    Controls["Display.IP Info"].String = combined
+    paintHeaderBox(Controls["Display.IP Info"])
   end
+end
+
+-- Device.Actual IP.Default Gateway gets the raw value (0.0.0.0 included).
+-- The display line stays blank (but painted over its "---" placeholder)
+-- while the switch has no gateway, which the API reports as 0.0.0.0.
+function updateGateway(ip)
+  if not ip then return end
+  setPinString("Device.Actual IP.Default Gateway", ip)
+  local ctrl = Controls["Display.Gateway"]
+  if not ctrl then return end
+  ctrl.String = (ip ~= "" and ip ~= "0.0.0.0") and ("Gateway " .. ip) or ""
+  paintHeaderBox(ctrl)
 end
 
 -- Single line: the boxes are one row tall, a wrapped second line was cut.
@@ -1399,16 +1534,16 @@ function formatDeviceDesc(rawDesc)
   return rawDesc
 end
 
+-- MAC and firmware boxes are the pins: blank until known (their "---"
+-- placeholder shows through), painted opaque once a value lands.
 function updateMac_Firmware()
-  local mac  = state.macAddress      ~= "" and state.macAddress      or "??:??:??:??:??:??"
-  local firm = state.firmwareVersion ~= "" and state.firmwareVersion or "?.?.?"
-  if Controls["Device.MAC"] then
-    Controls["Device.MAC"].String = mac
-    paintHeaderBox(Controls["Device.MAC"])
-  end
-  if Controls["Device.Firmware"] then
-    Controls["Device.Firmware"].String = firm
-    paintHeaderBox(Controls["Device.Firmware"])
+  for name, value in pairs({ ["Device.MAC Address"]     = state.macAddress,
+                             ["Device.Firmware.Active"] = state.firmwareVersion }) do
+    local ctrl = Controls[name]
+    if ctrl then
+      ctrl.String = value or ""
+      if (value or "") ~= "" then paintHeaderBox(ctrl) end
+    end
   end
 end
 
@@ -1454,6 +1589,7 @@ end
 function extractPath(raw)   return raw:match('"path"%s*:%s*"([^"]+)"') end
 function extractString(raw) return raw:match('"new_value"%s*:%s*"([^"]+)"') end
 function extractNumber(raw) return raw:match('"new_value"%s*:%s*(%d+)') end
+function extractSignedNumber(raw) return raw:match('"new_value"%s*:%s*(-?%d+)') end
 function extractBool(raw)   return raw:match('"new_value"%s*:%s*(%a+)') end
 
 function handleDevicePath(path, raw)
@@ -1487,21 +1623,44 @@ function handleDevicePath(path, raw)
     return true
   end
 
+  if path == "/device/hostname" then
+    local v = raw:match('"new_value"%s*:%s*"([^"]*)"')
+    if v then setPinString("Device.Hostname", v) end
+    return true
+  end
+
   if path == "/device/actual_ip/ip_address" then
     local v = extractString(raw)
-    if v then state.currentIP = v; updateIPinfo() end
+    if v then
+      state.currentIP = v
+      setPinString("Device.Actual IP.IP Address", v)
+      updateIPinfo()
+    end
     return true
   end
 
   if path == "/device/actual_ip/prefix_length" then
     local v = extractNumber(raw)
-    if v then state.prefixLength = v; updateIPinfo() end
+    if v then
+      state.prefixLength = v
+      setPinValue("Device.Actual IP.Prefix Length", v)
+      updateIPinfo()
+    end
+    return true
+  end
+
+  if path == "/device/actual_ip/default_gateway" then
+    updateGateway(extractString(raw))
     return true
   end
 
   if path == "/ip_settings/mode" then
     local v = extractString(raw)
-    if v then state.ipMode = v; updateIPinfo() end
+    if v then
+      state.ipMode = v
+      setPinString("IP Settings.Mode", v)
+      updateIPinfo()
+    end
     return true
   end
 
@@ -1557,14 +1716,7 @@ function handlePortPath(path, raw)
 
   if path == ("/ports/port/" .. port .. "/legend") then
     local v = extractString(raw)
-    if v then
-      local display = Controls["Port.Legend " .. port]
-      local edit    = Controls["Port.Legend Edit " .. port]
-      if display then
-        display.String = (#v > 8) and (v:sub(1, 8) .. " \n" .. v:sub(9)) or v
-      end
-      if edit then edit.String = v end
-    end
+    if v then setPinString("Ports.Port " .. port .. ".Legend", v) end
     return true
   end
 
@@ -1624,9 +1776,24 @@ function handlePortPath(path, raw)
 
   if path:find("/link_speed") then
     -- new_value is {"mode":..,"speed":[..]}, {"speed":[..]} when only the
-    -- speed changed, or a bare [..] on the /link_speed/speed sub-path. The
-    -- displayed label depends on the speed alone ("all" = Auto); a /mode
-    -- notification without a speed changes nothing.
+    -- speed changed, a bare "fixed" on the /link_speed/mode sub-path or a
+    -- bare [..] on /link_speed/speed. The Link Speed pins take each field
+    -- as it comes; the displayed label depends on the speed alone ("all" =
+    -- Auto).
+    local mode, list
+    if path:find("/link_speed/mode$") then
+      mode = raw:match('"new_value"%s*:%s*"([^"]*)"')
+    elseif path:find("/link_speed/speed$") then
+      list = speedListFromArray(raw:match('"new_value"%s*:%s*(%b[])'))
+    else
+      local obj = raw:match('"new_value"%s*:%s*(%b{})')
+      if obj then
+        mode = obj:match('"mode"%s*:%s*"([^"]*)"')
+        list = speedListFromArray(obj:match('"speed"%s*:%s*(%b[])'))
+      end
+    end
+    if mode or list then SetPortLinkSpeedFields(port, mode, list) end
+
     local speed = raw:match('"speed"%s*:%s*%[%s*"([^"]+)"')
     if not speed and path:find("/link_speed/speed$") then
       speed = raw:match('"new_value"%s*:%s*%[%s*"([^"]+)"')
@@ -1660,9 +1827,7 @@ end
 --------------------------------------------------------------------------------
 -- Raw link_state ("1gbps fdx", "100mbps hdx", "down", "unknown").
 function SetPortLinkState(port, raw)
-  local p = getPortState(port)
-  p.linkState = raw
-  p.link = raw ~= "down" and raw ~= "unknown"
+  getPortState(port).linkState = raw
   renderPortUI(port)
 end
 
@@ -1683,29 +1848,26 @@ function SetPortIndication(port, textVal)
   renderPortUI(port)
 end
 
--- RLinkX state machine value (/rlinkx/ports/N/state, GET /api/rlinkx). The
--- pin mapping keeps "active" for redundant, "enabled" for non-redundant and
--- "disabled" for everything else.
+-- RLinkX state machine value (/rlinkx/ports/N/state, GET /api/rlinkx):
+-- disabled, non-redundant, redundant, partial-redundant, invalid-version.
+-- The card's jack border shows it; it does not change the enabled pin.
 function SetPortRlinkxState(port, raw)
-  local p = getPortState(port)
-  p.rlinkxState = raw
-  if     raw == "redundant"     then p.rlinkx = "active"
-  elseif raw == "non-redundant" then p.rlinkx = "enabled"
-  else                               p.rlinkx = "disabled"
-  end
+  getPortState(port).rlinkxState = raw
   renderPortUI(port)
 end
 
--- Per-port RLinkX config flag (/ports/port/N/rlinkx, GET /api/ports). Enabling
--- does not downgrade a port the state machine already reports as active.
+-- Per-port RLinkX config flag (/ports/port/N/rlinkx, GET /api/ports), the
+-- Ports.Port N.RLinkX.Enabled pin.
 function SetPortRlinkxEnabled(port, enabled)
+  getPortState(port).rlinkxEnabled = enabled
+  renderPortUI(port)
+end
+
+-- Raw link_speed fields for the Link Speed pins; nil leaves a field as is.
+function SetPortLinkSpeedFields(port, mode, speedList)
   local p = getPortState(port)
-  p.rlinkxEnabled = enabled
-  if not enabled then
-    p.rlinkx = "disabled"
-  elseif p.rlinkx ~= "active" then
-    p.rlinkx = "enabled"
-  end
+  if mode then p.linkSpeedMode = mode end
+  if speedList then p.linkSpeedList = speedList end
   renderPortUI(port)
 end
 
@@ -1735,16 +1897,18 @@ local function setCtrlColor(name, color)
   if c then c.Color = color end
 end
 
+-- Raw integer pins (degrees C, rpm, %, mW); a sensor, fan or PSU slot the
+-- model lacks has no control and is skipped.
 function SetCaseTemp(v)
-  setCtrlString("System.Case Temp", string.format("Case temp.: %s °C", tostring(v)))
+  setPinValue("Temperatures.Case.Current", v)
 end
 
 function SetCpuTemp(v)
-  setCtrlString("System.CPU Temp", string.format("CPU temp.: %s °C", tostring(v)))
+  setPinValue("Temperatures.CPU.Current", v)
 end
 
 function SetFanSpeed(id, v)
-  setCtrlString("Fan." .. id .. " Speed", string.format("%s rpm", tostring(v)))
+  setPinValue("Fans.Fan " .. id .. ".Speed", v)
 end
 
 -- Badge background for a health state string as the API reports it
@@ -1759,12 +1923,6 @@ local function healthColor(status)
     return rgbHex(theme.badgeOffBg)
   end
   return rgbHex(theme.badgeErrBg)
-end
-
-local function milliwattsText(milliwatts)
-  local watts = tonumber(milliwatts)
-  if not watts then return nil end
-  return string.format("%.1f W", watts / 1000)
 end
 
 -- PSU icon tinted by state, as the switch web UI draws it. The color lives
@@ -1782,22 +1940,36 @@ local function psuIconSvg(color)
   return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 9.9727 9.9668\"><g transform=\"matrix(0.37100573,0,0,-0.37078499,8.72601,0)\"><path fill=\"" .. color .. "\" d=\"m 0,0 h -20.16 c -1.854,-0.006 -3.354,-1.506 -3.36,-3.36 v -15.12 c 0.006,-1.854 1.506,-3.354 3.36,-3.36 h 5.04 v 3.36 h -5.04 v 15.12 h 1.68 V -8.4 h 3.36 v 5.04 h 3.36 V -8.4 h 3.36 v 5.04 h 3.36 V -8.4 h 3.36 v 5.04 H 0 v -15.12 h -5.04 v -3.36 H 0 c 1.854,0.006 3.354,1.506 3.36,3.36 V -3.36 C 3.354,-1.506 1.854,-0.006 0,0\"/></g><g transform=\"matrix(0.37100573,0,0,-0.37078499,5.84222,4.36055)\"><path fill=\"" .. color .. "\" d=\"m 0,0 h -4.332 l -2.734,-6.72 h 3.444 l -2.928,-8.4 8.194,11.76 h -3.552 z\"/></g></svg>"
 end
 
-function SetPsuStatus(id, status)
-  setCtrlString("PSU." .. id .. " Status", status)
+-- PSU state (good / warning / error / invalid, "" for an empty slot): the
+-- pin and the status-block icon tint. power_status is a separate pin and
+-- does not touch the icon.
+function SetPsuState(id, value)
+  setPinString("Power.PSU " .. id .. ".State", value)
   local icon = Controls["PSU." .. id .. " Icon"]
   if not icon then return end
-  local svg = psuIconSvg(PSU_ICON_COLORS[status] or "#DC2828")
+  local svg = psuIconSvg(PSU_ICON_COLORS[value or ""] or "#DC2828")
   icon.Legend = '{"DrawChrome":false,"IconData":"' .. Crypto.Base64Encode(svg) .. '","Legend":""}'
 end
 
+function SetPsuPowerStatus(id, value)
+  setPinString("Power.PSU " .. id .. ".Power Status", value)
+end
+
 function SetPsuPower(id, milliwatts)
-  local text = milliwattsText(milliwatts)
-  if text then setCtrlString("PSU." .. id .. " Power", text) end
+  setPinValue("Power.PSU " .. id .. ".Power Usage", milliwatts)
 end
 
 function SetTotalPower(milliwatts)
-  local text = milliwattsText(milliwatts)
-  if text then setCtrlString("Power.Total Usage", text) end
+  setPinValue("Power.Total Power Usage", milliwatts)
+end
+
+function SetTotalPowerMax(milliwatts)
+  setPinValue("Power.Total Power Max", milliwatts)
+end
+
+-- Switch-wide RLinkX flag (/rlinkx/enabled, GET /api/rlinkx).
+function SetRlinkxEnabled(value)
+  setPinBoolean("RLinkX.Enabled", value)
 end
 
 -- Coupling indicator between the two PSU icons, as the switch web UI draws
@@ -1826,7 +1998,7 @@ end
 
 function SetPowerCoupling(mode)
   state.couplingMode = mode or ""
-  setCtrlString("Power.Coupling", state.couplingMode)
+  setPinString("Power.Coupling.Mode", state.couplingMode)
   refreshCoupling()
 end
 
@@ -1835,12 +2007,13 @@ function SetCouplingState(status)
   refreshCoupling()
 end
 
-function SetCpuLoad1s(v)
-  setCtrlString("System.CPU Load 1s", string.format("%s%% (1s)", tostring(v)))
+-- CPU load averaged over 3 s (cpu_load) and 30 s (cpu_load_long), in %.
+function SetCpuLoad(v)
+  setPinValue("System.CPU Load", v)
 end
 
-function SetCpuLoad10s(v)
-  setCtrlString("System.CPU Load 10s", string.format("%s%% (10s)", tostring(v)))
+function SetCpuLoadLong(v)
+  setPinValue("System.CPU Load Long", v)
 end
 
 function SetBridgePriority(v)
@@ -1908,21 +2081,28 @@ end
 --------------------------------------------------------------------------------
 -- WS path handlers for system/power/fans/spanning_tree/snooping
 --------------------------------------------------------------------------------
+-- Temperatures can be negative: matched with a sign. The case temperature
+-- comes from the case sensor only (/system/temperature/current is the CPU's).
 function handleSystemPath(path, raw)
   if path == "/system/cpu_load" then
-    local v = extractNumber(raw); if v then SetCpuLoad1s(v) end
+    local v = extractNumber(raw); if v then SetCpuLoad(v) end
     return true
   end
   if path == "/system/cpu_load_long" then
-    local v = extractNumber(raw); if v then SetCpuLoad10s(v) end
+    local v = extractNumber(raw); if v then SetCpuLoadLong(v) end
     return true
   end
-  if path == "/system/temperature/current" or path == "/temperatures/temperature/case/current" then
-    local v = extractNumber(raw); if v then SetCaseTemp(v) end
+  if path == "/temperatures/temperature/case/current" then
+    local v = extractSignedNumber(raw); if v then SetCaseTemp(v) end
     return true
   end
   if path == "/temperatures/temperature/cpu/current" then
-    local v = extractNumber(raw); if v then SetCpuTemp(v) end
+    local v = extractSignedNumber(raw); if v then SetCpuTemp(v) end
+    return true
+  end
+  if path == "/rlinkx/enabled" then
+    local v = extractBool(raw)
+    if v == "true" or v == "false" then SetRlinkxEnabled(v == "true") end
     return true
   end
   return false
@@ -1955,15 +2135,24 @@ function handlePowerPath(path, raw)
     local v = extractNumber(raw); if v then SetTotalPower(v) end
     return true
   end
+  if path == "/power/total_power_max" then
+    local v = extractNumber(raw); if v then SetTotalPowerMax(v) end
+    return true
+  end
   local psu, field = path:match("^/power/psus/(psu%d+)/(.+)$")
   if not psu then return false end
   local id = tonumber(psu:match("(%d+)"))
-  if field == "state" or field == "power_status" then
-    local v = extractString(raw); if v then SetPsuStatus(id, v) end
+  if field == "state" then
+    local v = extractString(raw); if v then SetPsuState(id, v) end
+    return true
+  end
+  if field == "power_status" then
+    local v = extractString(raw); if v then SetPsuPowerStatus(id, v) end
     return true
   end
   if field == "power_usage" then
-    local v = extractNumber(raw); if v then SetPsuPower(id, v) end
+    -- -1 is the API error marker
+    local v = extractSignedNumber(raw); if v then SetPsuPower(id, v) end
     return true
   end
   return false
@@ -2013,9 +2202,9 @@ pulseOn = false
 -- The badge in the left display block and the dot in the right status
 -- block (as on the switch web UI) share one color.
 local function paintDeviceStatus(color)
-  local badge = Controls["Device.Status"]
+  local badge = Controls["Display.Status"]
   if badge then badge.Color = color end
-  local dot = Controls["Device.Status Dot"]
+  local dot = Controls["Display.Status Dot"]
   if dot then
     dot.Color = color
     pcall(function() dot.OffColor = color end)
@@ -2023,7 +2212,7 @@ local function paintDeviceStatus(color)
 end
 
 function SetDeviceStatus(status)
-  local ctrl = Controls["Device.Status"]
+  local ctrl = Controls["Display.Status"]
   if not ctrl then return end
 
   if status == "online" then
@@ -2312,12 +2501,7 @@ function pickerAssign(kind, id)
     ),
     EventHandler = function(_tbl, code, _body, err)
       log("PUT member_of port " .. port .. " " .. body .. " => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
-      if code == 200 then
-        local value = nil
-        if kind == "group" then value = "Group: " .. id end
-        if kind == "trunk" then value = "Trunk: " .. id end
-        SetPortMemberOf(port, value)
-      end
+      if code == 200 then SetPortMemberOf(port, memberOfKey(kind, id)) end
     end,
   }
 end
@@ -2325,8 +2509,7 @@ end
 
 --------------------------------------------------------------------------------
 -- Speed picker (main page). A Port.Speed Cell click opens a modal card that
--- lists SPEED_CHOICES; a pick calls applyPortSpeed, which the Port.Speed pin
--- handler shares (runtime.lua). zSpeed.* controls are declared in
+-- lists SPEED_CHOICES; a pick calls applyPortSpeed. zSpeed.* controls are declared in
 -- controls.lua and placed by buildSpeedPickerPanel (layout.lua).
 --------------------------------------------------------------------------------
 local function speedPickerControlNames()

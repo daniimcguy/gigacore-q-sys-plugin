@@ -11,7 +11,9 @@ state.selectedModel  = modelString  -- design time only; the runtime reads Prope
 -- Port-settings grid geometry, shared by the chassis page and the page
 -- size helpers. One column = label + enable + legend + rlinkx + poe toggle
 -- + poe bounce + group + speed.
-local GRID_COL_W   = 16 + 20 + 50 + 20 + 20 + 20 + 72 + 110
+-- The 68 px group cell lets the 30i / S30-I fit a 4th column (8 rows
+-- instead of 10) inside their page width.
+local GRID_COL_W   = 16 + 20 + 50 + 20 + 20 + 20 + 68 + 110
 local GRID_COL_PAD = 6
 local GRID_X_START = 12
 local GRID_ROW_H   = 22
@@ -88,20 +90,6 @@ local function pageHeightForModel(model)
   return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
 end
 
-local function drawCommonLogos(gfx)
-  local lumX, lumY = 5, 5
-  local lumW, lumH = 119, 36
-  gfx[#gfx+1] = {
-    Type     = "Svg",
-    Image    = LogoLuminex,
-    Position = { lumX, lumY },
-    Size     = { lumW, lumH },
-  }
-  local lumCenterX = lumX + (lumW / 2)
-  local lumBottomY = lumY + lumH
-  return lumCenterX, lumBottomY
-end
-
 -- Two-row device header (Araneo-style), three columns left-aligned:
 --   Col 1: [Status]      / [Firmware]      — narrow, left edge
 --   Col 2: [Switch Name] / [Description]   — middle
@@ -149,7 +137,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
   placeholder(col3X, row1Y, infoW, "---")
   placeholder(col3X, row2Y, infoW, "---")
 
-  layout["Device.Status"] = {
+  layout["Display.Status"] = {
     Style        = "Text",
     Position     = { x0, row1Y },
     Size         = { statusW, rowH },
@@ -197,7 +185,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     CornerRadius = 1,
   }
 
-  layout["Device.IP Info"] = {
+  layout["Display.IP Info"] = {
     Style        = "Indicator",
     Position     = { col3X, row1Y },
     Size         = { infoW, rowH },
@@ -213,7 +201,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     CornerRadius = 1,
   }
 
-  layout["Device.MAC"] = {
+  layout["Device.MAC Address"] = {
     Style        = "Indicator",
     Position     = { col3X, row2Y },
     Size         = { infoW, rowH },
@@ -229,7 +217,7 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     CornerRadius = 1,
   }
 
-  layout["Device.Firmware"] = {
+  layout["Device.Firmware.Active"] = {
     Style        = "Indicator",
     Position     = { x0, row2Y },
     Size         = { statusW, rowH },
@@ -378,7 +366,7 @@ local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
     StrokeWidth  = 0,
     CornerRadius = 3,
   }
-  flatButton("Device.Status Dot", inX, inY + 2, dotD, dotD, { CornerRadius = 3 })
+  flatButton("Display.Status Dot", inX, inY + 2, dotD, dotD, { CornerRadius = 3 })
 
   -- RSTP lines, left of the PSU column
   local psuColW = 48
@@ -476,11 +464,12 @@ local function buildChassisPage(layout, gfx, model, theme)
   buildStatusBlock(layout, gfx, theme, chassisX + geometry.w + STATUS_GAP, blockY, svgH, outlineW)
 
   -- Screen contents: logo + status badge on the first row, then model,
-  -- device name, IP, firmware + MAC. Static placeholders sit under the
-  -- transparent controls for the offline (never emulated) look; the
-  -- runtime paints a control opaque when live data lands in it.
+  -- device name, description, IP, gateway (blank when the switch has none),
+  -- firmware + MAC. Static placeholders sit under the transparent controls
+  -- for the offline (never emulated) look; the runtime paints a control
+  -- opaque when live data lands in it.
   local pad   = 5
-  local logoH = 16
+  local logoH = 28
   local logoW = math.floor(logoH * 3.3 + 0.5)
   local logoX, logoY = scrX + pad, scrY + pad
   gfx[#gfx+1] = {
@@ -490,7 +479,7 @@ local function buildChassisPage(layout, gfx, model, theme)
     Size     = { logoW, logoH },
   }
   -- Invisible button covering the logo — click triggers /api/identify.
-  layout["Device.Identify"] = {
+  layout["Identify"] = {
     Style             = "Button",
     ButtonStyle       = "Momentary",
     ButtonVisualStyle = "Flat",
@@ -505,7 +494,7 @@ local function buildChassisPage(layout, gfx, model, theme)
 
   local statusW, statusH = 56, 16
   local statusX = scrX + scrW - pad - statusW
-  local statusY = scrY + pad
+  local statusY = logoY + math.floor((logoH - statusH) / 2)
   gfx[#gfx+1] = {
     Type         = "Rectangle",
     Position     = { statusX, statusY },
@@ -525,7 +514,7 @@ local function buildChassisPage(layout, gfx, model, theme)
     HTextAlign = "Center",
     VTextAlign = "Center",
   }
-  layout["Device.Status"] = {
+  layout["Display.Status"] = {
     Style        = "Text",
     Position     = { statusX, statusY },
     Size         = { statusW, statusH },
@@ -543,7 +532,7 @@ local function buildChassisPage(layout, gfx, model, theme)
   local lineH = 14
   local lineX = scrX + pad
   local lineW = scrW - pad * 2
-  local line1 = logoY + logoH + 3
+  local line1 = logoY + logoH + 4
   local function screenText(x, y, w, text, color, bold)
     gfx[#gfx+1] = {
       Type       = "Text",
@@ -576,14 +565,15 @@ local function buildChassisPage(layout, gfx, model, theme)
     }
   end
   screenText(lineX, line1, lineW, model, theme.textPrimary, true)
-  for i = 1, 4 do screenText(lineX, line1 + lineH * i, lineW, "---", theme.textMuted) end
+  for i = 1, 5 do screenText(lineX, line1 + lineH * i, lineW, "---", theme.textMuted) end
   local fwW = 44
-  screenBox("Device.Model",       lineX, line1, lineW, true)
+  screenBox("Display.Model",      lineX, line1, lineW, true)
   screenBox("Device.Name",        lineX, line1 + lineH, lineW)
   screenBox("Device.Description", lineX, line1 + lineH * 2, lineW)
-  screenBox("Device.IP Info",     lineX, line1 + lineH * 3, lineW)
-  screenBox("Device.Firmware",    lineX, line1 + lineH * 4, fwW)
-  screenBox("Device.MAC",         lineX + fwW + 4, line1 + lineH * 4, lineW - fwW - 4)
+  screenBox("Display.IP Info",    lineX, line1 + lineH * 3, lineW)
+  screenBox("Display.Gateway",    lineX, line1 + lineH * 4, lineW)
+  screenBox("Device.Firmware.Active", lineX, line1 + lineH * 5, fwW)
+  screenBox("Device.MAC Address", lineX + fwW + 4, line1 + lineH * 5, lineW - fwW - 4)
 
   -- One IconData Button per port card (Port.Card N) and per 10G frame
   -- (Chassis.10G N). A card box is the card plus CARD_BAR_SPACE on its
@@ -620,16 +610,18 @@ local function buildChassisPage(layout, gfx, model, theme)
     end
   end
 
-  -- Per-port settings grid below the chassis. 4 columns × 8 rows of controls
-  -- mirroring what the old Port Settings page exposed: enable toggle, port
-  -- number, legend TextBox, RLinkX toggle, PoE toggle, PoE bounce, speed combo.
+  -- Per-port settings grid below the chassis (columns and rows from
+  -- gridDimsForModel): port number, enable toggle, legend TextBox, RLinkX
+  -- toggle, PoE toggle, PoE bounce, group cell, speed cell. Ports above the
+  -- model's PoE count leave the two PoE cells empty.
+  local poeCount   = getPoeCount(model)
   local labelW     = 16
   local enableW    = 20
   local legendW    = 50
   local rlinkxW    = 20
   local poeToggleW = 20
   local poeBounceW = 20
-  local groupW     = 72
+  local groupW     = 68
   local speedW     = 110
   local colPad     = GRID_COL_PAD
   local colW       = GRID_COL_W
@@ -652,7 +644,7 @@ local function buildChassisPage(layout, gfx, model, theme)
     local groupX     = poeBounceX + poeBounceW
     local speedX     = groupX + groupW
 
-    layout["Port.Enable " .. p] = {
+    layout["Ports.Port " .. p .. ".Enabled"] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
       Position          = { enableX, y },
@@ -669,7 +661,7 @@ local function buildChassisPage(layout, gfx, model, theme)
     }
 
     -- Port number is a clickable Button (identifies the port via API).
-    layout["Port.Identify " .. p] = {
+    layout["Port Identify.Port " .. p] = {
       Style             = "Button",
       ButtonStyle       = "Momentary",
       ButtonVisualStyle = "Flat",
@@ -685,7 +677,7 @@ local function buildChassisPage(layout, gfx, model, theme)
       StrokeWidth       = 0,
     }
 
-    layout["Port.Legend Edit " .. p] = {
+    layout["Ports.Port " .. p .. ".Legend"] = {
       Style        = "TextBox",
       Position     = { legendX + 1, y },
       Size         = { legendW - 2, cellH },
@@ -699,7 +691,7 @@ local function buildChassisPage(layout, gfx, model, theme)
       CornerRadius = 1,
     }
 
-    layout["RLinkX.Toggle " .. p] = {
+    layout["Ports.Port " .. p .. ".RLinkX.Enabled"] = {
       Style             = "Button",
       ButtonStyle       = "Toggle",
       Position          = { rlinkxX, y },
@@ -713,30 +705,32 @@ local function buildChassisPage(layout, gfx, model, theme)
       Legend            = "",
     }
 
-    layout["PoE.Toggle " .. p] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      Position          = { poeToggleX, y },
-      Size              = { poeToggleW, cellH },
-      Color             = { 0, 0, 0, 0 },
-      CornerRadius      = 2,
-      ButtonVisualStyle = "Flat",
-      Legend            = "",
-    }
+    if p <= poeCount then
+      layout["PoE.Port " .. p .. ".Enabled"] = {
+        Style             = "Button",
+        ButtonStyle       = "Toggle",
+        Position          = { poeToggleX, y },
+        Size              = { poeToggleW, cellH },
+        Color             = { 0, 0, 0, 0 },
+        CornerRadius      = 2,
+        ButtonVisualStyle = "Flat",
+        Legend            = "",
+      }
 
-    layout["PoE.Bounce " .. p] = {
-      Style             = "Button",
-      ButtonStyle       = "Momentary",
-      Position          = { poeBounceX, y },
-      Size              = { poeBounceW, cellH },
-      Legend            = "↻",
-      FontSize          = 10,
-      TextColor         = theme.textPrimary,
-      Color             = theme.accentCyan,
-      OffColor          = theme.buttonOffColor,
-      CornerRadius      = 2,
-      ButtonVisualStyle = "Flat",
-    }
+      layout["PoE.Bounce " .. p] = {
+        Style             = "Button",
+        ButtonStyle       = "Momentary",
+        Position          = { poeBounceX, y },
+        Size              = { poeBounceW, cellH },
+        Legend            = "↻",
+        FontSize          = 10,
+        TextColor         = theme.textPrimary,
+        Color             = theme.accentCyan,
+        OffColor          = theme.buttonOffColor,
+        CornerRadius      = 2,
+        ButtonVisualStyle = "Flat",
+      }
+    end
 
     layout["Port.Group " .. p] = {
       Style             = "Button",
@@ -940,163 +934,6 @@ local function buildControlsPage(layout, gfx, model)
 end
 
 --------------------------------------------------------------------------------
--- Port settings page
---------------------------------------------------------------------------------
-local function buildPortSettingsPage(layout, gfx, props)
-  local model = resolveModel(props)
-  local portCount = getPortCount(model)
-  local rows    = 8
-  local columns = math.ceil(portCount / rows)
-
-  local toggleW    = 22
-  local labelW     = 17
-  local boxW       = 100
-  local rlinkxW    = 22
-  local poeToggleW = 22
-  local poeBounceW = 22
-  local dropdownW  = 124
-  local gap        = 0
-
-  local colW   = labelW + toggleW + boxW + rlinkxW + poeToggleW + poeBounceW + dropdownW + (gap * 6)
-  local cSpace = colW + 2
-  local boxH   = 18
-  local rSpace = 22
-  local startX = 2
-  local startY = 50
-
-  local totalW = columns * cSpace + startX
-  local totalH = 275
-  local theme  = getThemeColors()
-
-  gfx[#gfx+1] = {
-    Type        = "Groupbox",
-    Fill        = theme.groupboxFill,
-    StrokeColor = GROUPBOX_STROKE_COLOR,
-    StrokeWidth = GROUPBOX_STROKE_WIDTH,
-    Position    = GROUPBOX_POSITION,
-    Size        = { totalW + GROUPBOX_EXTRA_PADDING, totalH },
-  }
-
-  local lumCenterX, ipY = drawCommonLogos(gfx)
-  defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipY)
-
-  local p = 1
-  for col = 0, columns - 1 do
-    for row = 0, rows - 1 do
-      if p > portCount then break end
-
-      local y = startY + row * rSpace
-      local x = startX + col * cSpace
-
-      local labelX     = x
-      local enableX    = labelX + labelW + gap
-      local legendX    = enableX + toggleW + gap
-      local rlinkxX    = legendX + boxW + gap
-      local poeToggleX = rlinkxX + rlinkxW + gap
-      local poeBounceX = poeToggleX + poeToggleW + gap
-      local speedX     = poeBounceX + poeBounceW + gap
-
-      layout["Port.Enable " .. p] = {
-        Style             = "Button",
-        ButtonStyle       = "Toggle",
-        Position          = { enableX - 2, y },
-        Size              = { toggleW, boxH },
-        FontSize          = 10,
-        TextColor         = { 255, 255, 255 },
-        Color             = { 30, 200, 60 },
-        OffColor          = { 0, 0, 0 },
-        CornerRadius      = 2,
-        HTextAlign        = "Center",
-        VTextAlign        = "Center",
-        ButtonVisualStyle = "Flat",
-        Legend            = "",
-      }
-
-      gfx[#gfx+1] = {
-        Type       = "Text",
-        Text       = tostring(p),
-        Position   = { labelX, y },
-        Size       = { labelW, boxH },
-        Font       = "Roboto",
-        FontSize   = 11,
-        Color      = theme.textPrimary,
-        HTextAlign = "Center",
-        VTextAlign = "Center",
-      }
-
-      layout["Port.Legend Edit " .. p] = {
-        Style        = "TextBox",
-        Position     = { legendX - 1, y },
-        Size         = { boxW, boxH },
-        Font         = "Roboto",
-        FontSize     = 11,
-        HTextAlign   = "Left",
-        TextColor    = theme.textPrimary,
-        Color        = { 0, 0, 0, 0 },
-        StrokeColor  = theme.cardStroke,
-        StrokeWidth  = 1,
-        CornerRadius = 1,
-      }
-
-      layout["RLinkX.Toggle " .. p] = {
-        Style             = "Button",
-        ButtonStyle       = "Toggle",
-        Position          = { rlinkxX, y },
-        Size              = { rlinkxW, boxH },
-        Color             = { 0, 200, 255 },
-        CornerRadius      = 2,
-        OffColor          = { 40, 40, 40 },
-        HTextAlign        = "Center",
-        VTextAlign        = "Center",
-        ButtonVisualStyle = "Flat",
-        Legend            = "",
-      }
-
-      layout["PoE.Toggle " .. p] = {
-        Style             = "Button",
-        ButtonStyle       = "Toggle",
-        Position          = { poeToggleX, y },
-        Size              = { poeToggleW, boxH },
-        String            = "",
-        Color             = { 0, 0, 0, 0 },
-        CornerRadius      = 2,
-        ButtonVisualStyle = "Flat",
-      }
-
-      layout["PoE.Bounce " .. p] = {
-        Style             = "Button",
-        ButtonStyle       = "Momentary",
-        Position          = { poeBounceX, y },
-        Size              = { poeBounceW, boxH },
-        Legend            = "↻",
-        FontSize          = 12,
-        TextColor         = theme.textPrimary,
-        Color             = theme.accentCyan,
-        OffColor          = theme.buttonOffColor,
-        CornerRadius      = 2,
-        ButtonVisualStyle = "Flat",
-      }
-
-      layout["Port.Speed " .. p] = {
-        Style        = "ComboBox",
-        Position     = { speedX, y },
-        Size         = { dropdownW, boxH },
-        Font         = "Roboto",
-        FontSize     = 11,
-        TextColor    = theme.textPrimary,
-        Color        = { 0, 0, 0, 0 },
-        IsReadOnly   = false,
-        StrokeColor  = theme.cardStroke,
-        StrokeWidth  = 1,
-        CornerRadius = 1,
-      }
-
-      p = p + 1
-    end
-  end
-end
-
---------------------------------------------------------------------------------
 -- Configuration page
 --------------------------------------------------------------------------------
 local function buildConfigurationPage(layout, gfx, props)
@@ -1190,7 +1027,7 @@ local function buildConfigurationPage(layout, gfx, props)
     TextColor  = { 255, 255, 255 },
   }
 
-  layout["Auth.Identify"] = {
+  layout["Identify"] = {
     Legend      = "Identify",
     Style       = "Button",
     ButtonStyle = "Momentary",
@@ -1359,11 +1196,21 @@ local function buildGroupTrunkSettingsPage(layout, gfx, props)
     end)
 end
 
+-- Q-SYS lists a pin in Control Pins only when its control has a layout
+-- entry. Every pin the main page does not place gets a Style "None" entry
+-- (hidden, pin kept); the PrettyName pass below files it in its folder.
+local function addPinOnlyEntries(layout, props)
+  for _, ctl in ipairs(GetControls(props)) do
+    if ctl.UserPin == true and layout[ctl.Name] == nil then
+      layout[ctl.Name] = { Style = "None", Position = { 0, 0 }, Size = { 1, 1 } }
+    end
+  end
+end
+
 --------------------------------------------------------------------------------
 -- Page dispatcher — model-named page falls through to buildControlsPage
 --------------------------------------------------------------------------------
 local pageBuilders = {
-  ["Port settings"] = function(layout, gfx, props) buildPortSettingsPage(layout, gfx, props) end,
   ["Configuration"] = buildConfigurationPage,
   ["Groups and Trunks"] = buildGroupTrunkSettingsPage,
 }
@@ -1372,6 +1219,7 @@ setmetatable(pageBuilders, {
   __index = function(_, _key)
     return function(layout, gfx, props)
       buildControlsPage(layout, gfx, resolveModel(props))
+      addPinOnlyEntries(layout, props)
     end
   end,
 })
@@ -1394,9 +1242,9 @@ end
 
 -- Q-SYS trees the Control Pins panel on the `PrettyName` of each layout
 -- entry using "~" as the delimiter. Our control Names already carry the
--- category with "." (e.g. "PoE.Toggle 1"), so we just swap "." → "~" and
--- assign as PrettyName. Keeps Name unchanged (stable pin ID) while the
--- display in Q-SYS Designer nests into folders: PoE > Toggle 1, etc.
+-- API tree with "." (e.g. "PoE.Port 1.Enabled"), so we just swap "." → "~"
+-- and assign as PrettyName. Keeps Name unchanged (stable pin ID) while the
+-- display in Q-SYS Designer nests into folders: PoE > Port 1 > Enabled, etc.
 --
 -- Designer's hover tooltip shows the PrettyName. Controls that expose no pin
 -- get an empty PrettyName, which shrinks the tooltip to an empty bubble (it

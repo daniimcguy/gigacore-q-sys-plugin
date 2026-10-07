@@ -1,3 +1,4 @@
+state.portCount = getPortCount(resolveModel(Properties))
 local pc = state.portCount or 30
 
 state.darkMode = Properties["Dark Mode"].Value ~= "No"
@@ -30,29 +31,11 @@ if Controls["Auth.Connect"] then
   end
 end
 
-if Controls["Auth.Identify"] then
-  Controls["Auth.Identify"].EventHandler = function(btn)
-    if btn.Boolean and state.baseIP ~= "" then
-      HttpClient.Upload {
-        Url     = string.format("http://%s/api/identify", state.baseIP),
-        Method  = "PUT",
-        Data    = '{"duration": 9}',
-        Headers = MergeTables(
-          { ["Content-Type"] = "application/json" },
-          getAuthHeaders()
-        ),
-        EventHandler = function(_tbl, _status, _body, _err) end,
-      }
-      btn.Boolean = false
-    end
-  end
-end
-
 --------------------------------------------------------------------------------
 -- Port enable toggle
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local ctrl = Controls["Port.Enable " .. p]
+  local ctrl = Controls["Ports.Port " .. p .. ".Enabled"]
   if ctrl then
     ctrl.EventHandler = function()
       local newState = ctrl.Boolean
@@ -76,7 +59,7 @@ end
 -- PoE enable toggle
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local ctrl = Controls["PoE.Toggle " .. p]
+  local ctrl = Controls["PoE.Port " .. p .. ".Enabled"]
   if ctrl then
     ctrl.EventHandler = function()
       local newState = ctrl.Boolean
@@ -142,7 +125,7 @@ end
 -- Port legend edit
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local legendCtrl = Controls["Port.Legend Edit " .. p]
+  local legendCtrl = Controls["Ports.Port " .. p .. ".Legend"]
   if legendCtrl then
     legendCtrl.EventHandler = function(ctrl)
       local newVal = ctrl.String
@@ -164,7 +147,7 @@ end
 -- RLinkX toggle
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local toggleCtrl = Controls["RLinkX.Toggle " .. p]
+  local toggleCtrl = Controls["Ports.Port " .. p .. ".RLinkX.Enabled"]
   if toggleCtrl then
     toggleCtrl.EventHandler = function(ctrl)
       local enabled = ctrl.Boolean
@@ -185,17 +168,33 @@ for p = 1, pc do
 end
 
 --------------------------------------------------------------------------------
--- Speed: the Port.Speed pin (external writes, UI label or API token) and the
--- grid cell that opens the speed picker. Both end in applyPortSpeed.
+-- Pair pins: Link Speed Mode / Speed and Member Of Type / Id. A write to
+-- either half arms a 0.2 s window, then one PUT carries both pins' values.
 --------------------------------------------------------------------------------
 for p = 1, pc do
-  local pin = Controls["Port.Speed " .. p]
-  if pin then
-    pin.EventHandler = function(ctrl)
-      local val = ctrl.String
-      applyPortSpeed(p, SPEED_UI_MAP[val] or val)
+  local base = "Ports.Port " .. p .. "."
+  for _, leaf in ipairs({ "Link Speed.Mode", "Link Speed.Speed" }) do
+    local ctrl = Controls[base .. leaf]
+    if ctrl then
+      ctrl.EventHandler = function()
+        scheduleWrite("speed " .. p, function() putPortLinkSpeed(p) end)
+      end
     end
   end
+  for _, leaf in ipairs({ "Member Of.Type", "Member Of.Id" }) do
+    local ctrl = Controls[base .. leaf]
+    if ctrl then
+      ctrl.EventHandler = function()
+        scheduleWrite("member " .. p, function() putPortMemberOf(p) end)
+      end
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Speed cell: opens the speed picker (applyPortSpeed on a pick).
+--------------------------------------------------------------------------------
+for p = 1, pc do
   local cell = Controls["Port.Speed Cell " .. p]
   if cell then
     cell.EventHandler = function(c)
@@ -205,7 +204,8 @@ for p = 1, pc do
 end
 
 --------------------------------------------------------------------------------
--- Identify — device-level (logo click) and per-port (port number click).
+-- Identify — device-level (logo click, Configuration page button) and per-port
+-- (port number click).
 --------------------------------------------------------------------------------
 local function identifyDevice()
   if state.baseIP == "" then return end
@@ -240,7 +240,7 @@ local function identifyPort(port)
   }
 end
 
-local idBtn = Controls["Device.Identify"]
+local idBtn = Controls["Identify"]
 if idBtn then
   idBtn.EventHandler = function(c)
     if c.Boolean then identifyDevice() end
@@ -248,7 +248,7 @@ if idBtn then
 end
 
 for p = 1, pc do
-  local b = Controls["Port.Identify " .. p]
+  local b = Controls["Port Identify.Port " .. p]
   if b then
     b.EventHandler = function(c)
       if c.Boolean then identifyPort(p) end
