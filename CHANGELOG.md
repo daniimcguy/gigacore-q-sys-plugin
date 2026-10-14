@@ -24,22 +24,31 @@ must be re-wired.**
   (°C, rpm, %, mW, bit/s), booleans as toggles. A text value the switch has
   not reported yet is blank.
 - **Pins follow the model.** Pins exist only for the selected model's ports,
-  PoE ports, fans, PSU slots and case temperature sensor: 169 pins on a 10i,
-  466 on a 30i.
+  PoE ports, fans, PSU slots and case temperature sensor: 150 pins on a 10i,
+  407 on a 30i.
 - **Every pin is visible.** Pins without a place on a page used to be
   missing from Control Pins; they now all show there.
 - **Writes.** Writable fields are Both pins: the switch's live value comes
   out, a value wired or scripted in is sent to the switch. `Link Speed`
-  (`Mode` + `Speed`) and `Member Of` (`Type` + `Id`) are each one API
-  object: the first write to either half opens a 0.2 s window, then one
-  PUT carries both pins' values. Write both halves together (one script,
-  back to back): a second write after the window is sent as its own PUT,
-  with the other half as it is then. `Link Speed > Speed` is the API list
-  joined with `, ` (`all`, `1gbps fdx, 100mbps fdx`). For these two pairs,
-  a write the switch rejects, a write while offline or an empty value puts
-  the pins back to the switch's values. A rejected write to a single pin
-  (`Enabled`, `Legend`...) is logged; the pin shows the switch's value
-  again at the next poll (Poll Interval).
+  and `Member Of` are API objects carried whole by one pin each, so one
+  write is one PUT and a port never passes through a half-written state:
+  `Link Speed` is the mode, a space, then the API speed list joined with
+  `, ` (`auto all`, `fixed 100mbps fdx`, `auto 1gbps fdx, 100mbps fdx`);
+  `Member Of` is `group 22`, `trunk 1` or `none`. Case does not matter.
+  For these two, text that does not parse, a write the switch rejects or a
+  write while offline is logged and puts the pin back to the switch's
+  value. A rejected write to another pin (`Enabled`, `Legend`...) is
+  logged; the pin shows the switch's value again at the next poll (Poll
+  Interval).
+- **Status.** A new `Status` pin is the Q-SYS status indicator, for a
+  Monitoring Proxy or a Status Combiner: OK when connected, Initializing
+  while connecting, Missing when the switch is offline (the other pins keep
+  their last values then), Fault on an authentication failure or with no
+  IP address set, Compromised when the switch is another model than the
+  Model property or a PSU or fan reports a problem. Its text says which.
+- **Connect at start.** The plugin connects when the design starts if an
+  IP address is set: a Core reboot or a redeploy no longer waits for a
+  press on Connect.
 
 Renamed pins (v0.1.1 → v2.0.0, `N` = port number):
 
@@ -49,7 +58,7 @@ Renamed pins (v0.1.1 → v2.0.0, `N` = port number):
 | `port_enable_toggle_<N>` | `Ports.Port N.Enabled` | toggle, Both (was Input) |
 | `port_legend_edit_<N>`, `port_legend_display_<N>` | `Ports.Port N.Legend` | text, Both (was Output) |
 | `port_rlinkx_toggle_<N>` | `Ports.Port N.RLinkX.Enabled` | toggle, Both (was Input) |
-| `port_speed_dropdown_<N>` | `Ports.Port N.Link Speed.Mode`, `Ports.Port N.Link Speed.Speed` | text, Both: `auto` / `fixed`; API speed list (was a label such as `1 Gbps`) |
+| `port_speed_dropdown_<N>` | `Ports.Port N.Link Speed` | text, Both: `auto all`, `fixed 100mbps fdx` (was a label such as `1 Gbps`) |
 | `port_poe_toggle_<N>` | `PoE.Port N.Enabled` | toggle, Both (was Input); stays off without the PoE licence |
 | `indication<N>` | `PoE.Port N.Indication` | text: `enabled`, `sourcing`, `disabled`, `error`, or blank |
 | `device_name` | `Device.Name` | text |
@@ -57,23 +66,23 @@ Renamed pins (v0.1.1 → v2.0.0, `N` = port number):
 | `ip_info` | `Device.Actual IP.IP Address`, `Device.Actual IP.Prefix Length`, `IP Settings.Mode` | text, integer, text (was one formatted line) |
 | `mac_firmware` | `Device.MAC Address`, `Device.Firmware.Active` | text, blank until the switch reports them (was one line) |
 | `identify` | `Identify` | momentary, Input |
+| `device_status` | `Status` | Q-SYS status indicator (was text `Online` / `Offline`); the badge stays on the page |
 
 Removed pins:
 
 | v0.1.1 | Why, and what to use instead |
 |---|---|
-| `port_group_color_<N>` | Display color; the membership is `Ports.Port N.Member Of.Type` / `.Id` |
+| `port_group_color_<N>` | Display color; the membership is `Ports.Port N.Member Of` |
 | `poe_color_<N>` | Display color; the state it showed is `PoE.Port N.Indication` |
 | `rlinkx_bar_<N>` | Display color; use `Ports.Port N.RLinkX.Enabled` |
 | `port_bounce_btn_<N>` | Plugin action, not an API field; the bounce button stays in the port grid. From a wire or script, write `PoE.Port N.Enabled` false, then true |
-| `device_status` | Plugin state, not an API field; the Online / Offline badge stays on the page |
 | `ip_addr`, `auth_username`, `auth_password`, `auth_status`, `connect` | Connection settings, not API fields; set them on the Configuration page |
 | `test_dropdown` | Test control |
 
 New pins:
 
-- Ports: `Ports.Port N.Type` (`rj45` / `sfp`), `Ports.Port N.Member Of.Type`
-  (`group` / `trunk` / `none`) and `.Id` (Both), `Ports.Port N.Counters.Rx Bit Rate`,
+- Ports: `Ports.Port N.Type` (`rj45` / `sfp`), `Ports.Port N.Member Of`
+  (`group 22` / `trunk 1` / `none`, Both), `Ports.Port N.Counters.Rx Bit Rate`,
   `.Tx Bit Rate`, `.Link Flaps` (read from `/api/ports` at connect, 3 s later and
   at every Poll Interval; with Poll Interval Off, at connect and 3 s later only),
   `Port Identify.Port N` (momentary).

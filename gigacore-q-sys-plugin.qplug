@@ -245,7 +245,6 @@ state = {
   darkMode        = false,
   chassis         = nil,  -- chassisGeometry(Properties["Model"]), set by runtime.lua
   cardSvg         = {},   -- port -> last card SVG written to Port.Card N
-  pendingWrites   = {},   -- scheduleWrite key -> true while its 0.2 s window is open
 }
 
 --------------------------------------------------------------------------------
@@ -315,25 +314,24 @@ function renderPortPins(port)
   setPinBoolean(poe .. "Enabled", state.hasPoe ~= false and p.poeEnabled == true)
   setPinString(poe .. "Indication", p.poe)
 
-  -- A pair with a write pending keeps the values the script just wrote:
-  -- the PUT reads them when its window closes.
-  if not state.pendingWrites["speed " .. port] then
-    setPinString(base .. "Link Speed.Mode", p.linkSpeedMode)
-    setPinString(base .. "Link Speed.Speed", p.linkSpeedList)
+  -- One pin per API object: "<mode> <speed, speed>" ("auto all", "fixed
+  -- 100mbps fdx"), blank until both fields are known.
+  local speedText = ""
+  if p.linkSpeedMode and p.linkSpeedList then
+    speedText = p.linkSpeedMode .. " " .. p.linkSpeedList
   end
-  if not state.pendingWrites["member " .. port] then
-    -- "Group: 22" -> group / 22, "Trunk: 1" -> trunk / 1, reported without a
-    -- membership -> none / 0, never reported -> "" / 0.
-    local kind, id = "", 0
-    if p.memberOf then
-      local word, number = p.memberOf:match("^(%a+): (%d+)$")
-      kind, id = word and word:lower() or "", tonumber(number) or 0
-    elseif p.memberOfKnown then
-      kind = "none"
-    end
-    setPinString(base .. "Member Of.Type", kind)
-    setPinValue(base .. "Member Of.Id", id)
+  setPinString(base .. "Link Speed", speedText)
+
+  -- "Group: 22" -> "group 22", "Trunk: 1" -> "trunk 1", reported without a
+  -- membership -> "none", never reported -> "".
+  local member = ""
+  if p.memberOf then
+    local word, number = p.memberOf:match("^(%a+): (%d+)$")
+    if word then member = word:lower() .. " " .. number end
+  elseif p.memberOfKnown then
+    member = "none"
   end
+  setPinString(base .. "Member Of", member)
 end
 
 -- Port state key of a membership ("Group: 22", "Trunk: 1"), nil for none.
@@ -344,7 +342,7 @@ function memberOfKey(kind, id)
 end
 
 -- link_speed speed[] array text ('["1gbps fdx","100mbps fdx"]') -> the
--- Link Speed.Speed pin text ("1gbps fdx, 100mbps fdx"); nil stays nil.
+-- speed part of the Link Speed pin ("1gbps fdx, 100mbps fdx"); nil stays nil.
 function speedListFromArray(arrayText)
   if not arrayText then return nil end
   local tokens = {}
@@ -352,29 +350,18 @@ function speedListFromArray(arrayText)
   return table.concat(tokens, ", ")
 end
 
--- Pair pins (Link Speed Mode / Speed, Member Of Type / Id) form one API
--- object: the first write arms a 0.2 s window per key, writes inside it are
--- absorbed, and fn reads both pins when it fires.
-function scheduleWrite(key, fn)
-  if state.pendingWrites[key] then return end
-  state.pendingWrites[key] = true
-  Timer.CallAfter(function()
-    state.pendingWrites[key] = nil
-    fn()
-  end, 0.2)
-end
-
 local function trim(s)
   return (s or ""):match("^%s*(.-)%s*$")
 end
 
+-- Written pin text, trimmed and lowercased (every API token is lowercase).
 local function pinText(name)
   local c = Controls[name]
-  return c and c.String or ""
+  return trim(c and c.String or ""):lower()
 end
 
 -- PUT one port object; a rejected write logs the API reason and puts the
--- pins back to the switch's values.
+-- pin back to the switch's value.
 local function putPortObject(port, field, body, onSuccess)
   HttpClient.Upload {
     Url     = string.format("http://%s/api/ports/port/%d/%s", state.baseIP, port, field),
@@ -394,37 +381,51 @@ local function putPortObject(port, field, body, onSuccess)
   }
 end
 
--- Link Speed pins -> PUT /api/ports/port/N/link_speed. The Speed text splits
--- on ",", tokens trimmed, empty ones dropped.
+-- Link Speed pin -> PUT /api/ports/port/N/link_speed. "<mode> <speeds>":
+-- the first word is the mode, the rest splits on ",", tokens trimmed, empty
+-- ones dropped. Text without a mode and a speed, or a write while offline,
+-- puts the pin back. A 200 updates the port state (the WS may lag).
 function putPortLinkSpeed(port)
-  local base = "Ports.Port " .. port .. ".Link Speed."
-  local mode = trim(pinText(base .. "Mode"))
-  local tokens = {}
-  for piece in pinText(base .. "Speed"):gmatch("[^,]+") do
+  local text = pinText("Ports.Port " .. port .. ".Link Speed")
+  local mode, rest = text:match("^(%a+)%s+(.+)$")
+  local tokens, quoted = {}, {}
+  for piece in (rest or ""):gmatch("[^,]+") do
     local token = trim(piece)
-    if token ~= "" then tokens[#tokens + 1] = jsonString(token) end
+    if token ~= "" then
+      tokens[#tokens + 1] = token
+      quoted[#quoted + 1] = jsonString(token)
+    end
   end
-  if state.baseIP == "" or mode == "" or #tokens == 0 then
+  if state.baseIP == "" or not mode or #tokens == 0 then
+    log("Link Speed not sent on port " .. port .. ": '" .. text .. "'" ..
+        (state.baseIP == "" and " (offline)" or ", want '<mode> <speed, speed>'"))
     renderPortPins(port)
     return
   end
   putPortObject(port, "link_speed",
-    '{"mode":' .. jsonString(mode) .. ',"speed":[' .. table.concat(tokens, ",") .. ']}')
+    '{"mode":' .. jsonString(mode) .. ',"speed":[' .. table.concat(quoted, ",") .. ']}',
+    function() SetPortLinkSpeedFields(port, mode, table.concat(tokens, ", ")) end)
 end
 
--- Member Of pins -> PUT /api/ports/port/N/member_of; a 200 updates the port
--- state (the WS notification may lag).
+-- Member Of pin -> PUT /api/ports/port/N/member_of: "group 22", "trunk 1"
+-- or "none". Other text, or a write while offline, puts the pin back. A 200
+-- updates the port state (the WS notification may lag).
 function putPortMemberOf(port)
-  local base = "Ports.Port " .. port .. ".Member Of."
-  local kind = trim(pinText(base .. "Type"))
-  local idCtrl = Controls[base .. "Id"]
-  local id = math.floor(tonumber(idCtrl and idCtrl.Value) or 0)
-  if state.baseIP == "" or kind == "" then
+  local text = pinText("Ports.Port " .. port .. ".Member Of")
+  local kind, number = text:match("^(%a+)%s*(%d+)$")
+  local id = tonumber(number)
+  local body
+  if text == "none" then
+    body = '{"type":"none"}'
+  elseif kind == "group" or kind == "trunk" then
+    body = string.format('{"type":"%s","id":%d}', kind, id)
+  end
+  if state.baseIP == "" or not body then
+    log("Member Of not sent on port " .. port .. ": '" .. text .. "'" ..
+        (state.baseIP == "" and " (offline)" or ", want 'group N', 'trunk N' or 'none'"))
     renderPortPins(port)
     return
   end
-  local body = (kind == "none") and '{"type":"none"}'
-            or string.format('{"type":%s,"id":%d}', jsonString(kind), id)
   putPortObject(port, "member_of", body, function()
     SetPortMemberOf(port, memberOfKey(kind, id))
   end)
@@ -860,6 +861,8 @@ function fetchDeviceInfo()
         log("Device model detected => " .. name)
         ctrl.String = name
         paintHeaderBox(ctrl)
+        state.modelMismatch = nil
+        refreshStatus()
         return
       end
       log("WARNING: Model property is set to '" .. selected ..
@@ -867,6 +870,8 @@ function fetchDeviceInfo()
           "'. Pick the correct model in plugin properties to fix the chassis layout.")
       ctrl.String = "Switch is " .. (name or raw)
       startModelPulse(ctrl)
+      state.modelMismatch = ctrl.String
+      refreshStatus()
     end,
   }
 end
@@ -1434,6 +1439,9 @@ function openWS(ip)
 
   state.ws.Connected = function()
     log("WebSocket Connected")
+    -- The subscription burst, /api/device and /api/power refill these.
+    state.modelMismatch, state.psuStates, state.fanStates = nil, {}, {}
+    SetConnection("online")
     local ok, err = pcall(function()
       updateAuthStatus("Authenticated", "#00A000")
       subscribeAllPorts()
@@ -1464,6 +1472,9 @@ function openWS(ip)
     stopPollTimer()
     if err and err:find("unauthorized") then
       updateAuthStatus("Auth failed", "#C80000")
+      SetConnection("unauthorized")
+    else
+      SetConnection("offline")
     end
     SetDeviceStatus("offline")
     clearPortCards()
@@ -1474,6 +1485,8 @@ function openWS(ip)
     if state.ws ~= thisWs then return end  -- superseded socket
     log("WebSocket Closed")
     stopPollTimer()
+    -- A close after an auth failure keeps the Fault.
+    if state.connection ~= "unauthorized" then SetConnection("offline") end
     SetDeviceStatus("offline")
     clearPortCards()
     scheduleReconnect()
@@ -1947,6 +1960,8 @@ end
 -- does not touch the icon.
 function SetPsuState(id, value)
   setPinString("Power.PSU " .. id .. ".State", value)
+  state.psuStates[id] = value
+  refreshStatus()
   local icon = Controls["PSU." .. id .. " Icon"]
   if not icon then return end
   local svg = psuIconSvg(PSU_ICON_COLORS[value or ""] or "#DC2828")
@@ -2118,7 +2133,7 @@ function handleFanPath(path, raw)
   end
   local id2 = path:match("^/fans/fan/(%d+)/state$")
   if id2 then
-    -- state not rendered yet; kept for future color coding
+    local v = extractString(raw); if v then SetFanState(tonumber(id2), v) end
     return true
   end
   return false
@@ -2236,6 +2251,67 @@ function SetDeviceStatus(status)
       offlinePulseTimer:Start(0.5)
     end
   end
+end
+
+--------------------------------------------------------------------------------
+-- Status pin: the Q-SYS status indicator (outside the API), wireable to a
+-- Monitoring Proxy or a Status Combiner. state.connection is noip,
+-- connecting, online, offline or unauthorized; once online, a model mismatch
+-- or a PSU / fan not good makes it Compromised. Reconnect attempts keep the
+-- offline / unauthorized state (no flapping through Initializing).
+--------------------------------------------------------------------------------
+local STATUS_VALUES = { ok = 0, compromised = 1, fault = 2, missing = 4, initializing = 5 }
+
+-- state.modelMismatch: "Switch is <model>" while the Model property differs.
+state.connection = state.connection or "noip"
+state.psuStates  = state.psuStates or {}
+state.fanStates  = state.fanStates or {}
+
+function refreshStatus()
+  local ctrl = Controls["Status"]
+  if not ctrl then return end
+  local kind, text
+  if state.connection == "noip" then
+    kind, text = "fault", "No IP address"
+  elseif state.connection == "unauthorized" then
+    kind, text = "fault", "Authentication failed"
+  elseif state.connection == "connecting" then
+    kind, text = "initializing", "Connecting"
+  elseif state.connection == "offline" then
+    kind, text = "missing", "Offline"
+  else
+    local problems = {}
+    if state.modelMismatch then problems[#problems + 1] = state.modelMismatch end
+    for id = 1, 2 do
+      local value = state.psuStates[id]
+      if value and value ~= "" and value ~= "good" then
+        problems[#problems + 1] = "PSU " .. id .. " " .. value
+      end
+    end
+    for id = 1, 3 do
+      local value = state.fanStates[id]
+      if value and value ~= "" and value ~= "good" then
+        problems[#problems + 1] = "Fan " .. id .. " " .. value
+      end
+    end
+    if #problems > 0 then
+      kind, text = "compromised", table.concat(problems, ", ")
+    else
+      kind, text = "ok", "Connected"
+    end
+  end
+  ctrl.Value  = STATUS_VALUES[kind]
+  ctrl.String = text
+end
+
+function SetConnection(connection)
+  state.connection = connection
+  refreshStatus()
+end
+
+function SetFanState(id, value)
+  state.fanStates[id] = value
+  refreshStatus()
 end
 
 --------------------------------------------------------------------------------
@@ -3198,11 +3274,12 @@ function GetControls(props)
       UserPin     = true,
     }
   
-    -- link_speed {mode, speed[]} and member_of {type, id}: one pin per leaf.
-    -- A write to either half of a pair sends the whole object (scheduleWrite).
-    -- Link Speed.Speed is the API array joined with ", ".
+    -- link_speed {mode, speed[]} and member_of {type, id}: one pin per API
+    -- object, so one write is one PUT. Link Speed is "<mode> <speed, speed>"
+    -- ("auto all", "fixed 100mbps fdx"); Member Of is "group 22", "trunk 1"
+    -- or "none".
     c[#c+1] = {
-      Name        = port .. "Link Speed.Mode",
+      Name        = port .. "Link Speed",
       ControlType = "Text",
       TextBoxType = "Normal",
       PinStyle    = "Both",
@@ -3211,31 +3288,12 @@ function GetControls(props)
     }
   
     c[#c+1] = {
-      Name        = port .. "Link Speed.Speed",
+      Name        = port .. "Member Of",
       ControlType = "Text",
       TextBoxType = "Normal",
       PinStyle    = "Both",
       UserPin     = true,
       Value       = "",
-    }
-  
-    c[#c+1] = {
-      Name        = port .. "Member Of.Type",
-      ControlType = "Text",
-      TextBoxType = "Normal",
-      PinStyle    = "Both",
-      UserPin     = true,
-      Value       = "",
-    }
-  
-    c[#c+1] = {
-      Name        = port .. "Member Of.Id",
-      ControlType = "Knob",
-      ControlUnit = "Integer",
-      Min         = 0,
-      Max         = 4094,
-      PinStyle    = "Both",
-      UserPin     = true,
     }
   
     -- Speed cell — Button showing the current link speed; click opens the
@@ -3423,6 +3481,18 @@ function GetControls(props)
     ButtonType  = "Momentary",
     PinStyle    = "Input",
     UserPin     = true,
+  }
+  
+  -- Q-SYS status pin, outside the API (refreshStatus, info.lua): OK connected,
+  -- Initializing connecting, Missing offline, Fault no IP / auth failure,
+  -- Compromised on a model mismatch or a PSU / fan not good.
+  c[#c+1] = {
+    Name          = "Status",
+    ControlType   = "Indicator",
+    IndicatorType = "Status",
+    PinStyle      = "Output",
+    UserPin       = true,
+    IsReadOnly    = true,
   }
   
   -- Display block lines, no pin: "GigaCore 30i" or "Switch is <model>"
@@ -4870,9 +4940,17 @@ if Controls then
   --------------------------------------------------------------------------------
   -- IP / connect / identify
   --------------------------------------------------------------------------------
+  -- "Enter your IP" is the field's placeholder value, not an address.
   local function connectToSwitch()
     updateAuthStatus("")
-    state.baseIP = Controls["Auth.IP Address"].String
+    local ip = Controls["Auth.IP Address"].String
+    if ip == "" or ip == "Enter your IP" then
+      state.baseIP = ""
+      SetConnection("noip")
+      return
+    end
+    state.baseIP = ip
+    SetConnection("connecting")
     openWS(state.baseIP)
   end
   
@@ -5030,26 +5108,17 @@ if Controls then
   end
   
   --------------------------------------------------------------------------------
-  -- Pair pins: Link Speed Mode / Speed and Member Of Type / Id. A write to
-  -- either half arms a 0.2 s window, then one PUT carries both pins' values.
+  -- Link Speed and Member Of pins: one write, one PUT of the whole object.
   --------------------------------------------------------------------------------
   for p = 1, pc do
     local base = "Ports.Port " .. p .. "."
-    for _, leaf in ipairs({ "Link Speed.Mode", "Link Speed.Speed" }) do
-      local ctrl = Controls[base .. leaf]
-      if ctrl then
-        ctrl.EventHandler = function()
-          scheduleWrite("speed " .. p, function() putPortLinkSpeed(p) end)
-        end
-      end
+    local speed = Controls[base .. "Link Speed"]
+    if speed then
+      speed.EventHandler = function() putPortLinkSpeed(p) end
     end
-    for _, leaf in ipairs({ "Member Of.Type", "Member Of.Id" }) do
-      local ctrl = Controls[base .. leaf]
-      if ctrl then
-        ctrl.EventHandler = function()
-          scheduleWrite("member " .. p, function() putPortMemberOf(p) end)
-        end
-      end
+    local member = Controls[base .. "Member Of"]
+    if member then
+      member.EventHandler = function() putPortMemberOf(p) end
     end
   end
   
@@ -5190,6 +5259,10 @@ if Controls then
       end
     end
   end
+  
+  -- Connect at start: a Core reboot or a redeploy reconnects to the saved
+  -- IP address without a press on Connect (Status Fault when none is set).
+  connectToSwitch()
   
   log("Enjoy")
 end

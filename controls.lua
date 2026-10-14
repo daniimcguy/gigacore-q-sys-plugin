@@ -82,11 +82,12 @@ for p = 1, portCount do
     UserPin     = true,
   }
 
-  -- link_speed {mode, speed[]} and member_of {type, id}: one pin per leaf.
-  -- A write to either half of a pair sends the whole object (scheduleWrite).
-  -- Link Speed.Speed is the API array joined with ", ".
+  -- link_speed {mode, speed[]} and member_of {type, id}: one pin per API
+  -- object, so one write is one PUT. Link Speed is "<mode> <speed, speed>"
+  -- ("auto all", "fixed 100mbps fdx"); Member Of is "group 22", "trunk 1"
+  -- or "none".
   c[#c+1] = {
-    Name        = port .. "Link Speed.Mode",
+    Name        = port .. "Link Speed",
     ControlType = "Text",
     TextBoxType = "Normal",
     PinStyle    = "Both",
@@ -95,31 +96,12 @@ for p = 1, portCount do
   }
 
   c[#c+1] = {
-    Name        = port .. "Link Speed.Speed",
+    Name        = port .. "Member Of",
     ControlType = "Text",
     TextBoxType = "Normal",
     PinStyle    = "Both",
     UserPin     = true,
     Value       = "",
-  }
-
-  c[#c+1] = {
-    Name        = port .. "Member Of.Type",
-    ControlType = "Text",
-    TextBoxType = "Normal",
-    PinStyle    = "Both",
-    UserPin     = true,
-    Value       = "",
-  }
-
-  c[#c+1] = {
-    Name        = port .. "Member Of.Id",
-    ControlType = "Knob",
-    ControlUnit = "Integer",
-    Min         = 0,
-    Max         = 4094,
-    PinStyle    = "Both",
-    UserPin     = true,
   }
 
   -- Speed cell — Button showing the current link speed; click opens the
@@ -307,6 +289,18 @@ c[#c+1] = {
   ButtonType  = "Momentary",
   PinStyle    = "Input",
   UserPin     = true,
+}
+
+-- Q-SYS status pin, outside the API (refreshStatus, info.lua): OK connected,
+-- Initializing connecting, Missing offline, Fault no IP / auth failure,
+-- Compromised on a model mismatch or a PSU / fan not good.
+c[#c+1] = {
+  Name          = "Status",
+  ControlType   = "Indicator",
+  IndicatorType = "Status",
+  PinStyle      = "Output",
+  UserPin       = true,
+  IsReadOnly    = true,
 }
 
 -- Display block lines, no pin: "GigaCore 30i" or "Switch is <model>"

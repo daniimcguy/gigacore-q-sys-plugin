@@ -8,9 +8,17 @@ clearPortCards()
 --------------------------------------------------------------------------------
 -- IP / connect / identify
 --------------------------------------------------------------------------------
+-- "Enter your IP" is the field's placeholder value, not an address.
 local function connectToSwitch()
   updateAuthStatus("")
-  state.baseIP = Controls["Auth.IP Address"].String
+  local ip = Controls["Auth.IP Address"].String
+  if ip == "" or ip == "Enter your IP" then
+    state.baseIP = ""
+    SetConnection("noip")
+    return
+  end
+  state.baseIP = ip
+  SetConnection("connecting")
   openWS(state.baseIP)
 end
 
@@ -168,26 +176,17 @@ for p = 1, pc do
 end
 
 --------------------------------------------------------------------------------
--- Pair pins: Link Speed Mode / Speed and Member Of Type / Id. A write to
--- either half arms a 0.2 s window, then one PUT carries both pins' values.
+-- Link Speed and Member Of pins: one write, one PUT of the whole object.
 --------------------------------------------------------------------------------
 for p = 1, pc do
   local base = "Ports.Port " .. p .. "."
-  for _, leaf in ipairs({ "Link Speed.Mode", "Link Speed.Speed" }) do
-    local ctrl = Controls[base .. leaf]
-    if ctrl then
-      ctrl.EventHandler = function()
-        scheduleWrite("speed " .. p, function() putPortLinkSpeed(p) end)
-      end
-    end
+  local speed = Controls[base .. "Link Speed"]
+  if speed then
+    speed.EventHandler = function() putPortLinkSpeed(p) end
   end
-  for _, leaf in ipairs({ "Member Of.Type", "Member Of.Id" }) do
-    local ctrl = Controls[base .. leaf]
-    if ctrl then
-      ctrl.EventHandler = function()
-        scheduleWrite("member " .. p, function() putPortMemberOf(p) end)
-      end
-    end
+  local member = Controls[base .. "Member Of"]
+  if member then
+    member.EventHandler = function() putPortMemberOf(p) end
   end
 end
 
@@ -328,5 +327,9 @@ for _, name in ipairs({ "zSpeed.Cancel", "zSpeed.Bg" }) do
     end
   end
 end
+
+-- Connect at start: a Core reboot or a redeploy reconnects to the saved
+-- IP address without a press on Connect (Status Fault when none is set).
+connectToSwitch()
 
 log("Enjoy")
