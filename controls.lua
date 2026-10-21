@@ -417,6 +417,17 @@ for _, name in ipairs({ "PSU.1 Icon", "PSU.2 Icon", "Power.Coupling Glyph", "Dis
   c[#c+1] = { Name = name, ControlType = "Text", TextBoxType = "ReadOnly", PinStyle = "None", UserPin = false, Value = "" }
 end
 
+-- Querier panel under the RSTP lines: a flat read-only Button whose Legend
+-- carries the title and the group badges as one IconData SVG (querierBadgesSvg).
+c[#c+1] = {
+  Name        = "Querier.Badges",
+  ControlType = "Button",
+  ButtonType  = "Toggle",
+  PinStyle    = "None",
+  UserPin     = false,
+  IsReadOnly  = true,
+}
+
 -- 10G frame per tenG group (IconData Button, like Port.Card), shown while the
 -- 10g licence is active. Declared for the model with the most tenG groups.
 local tenGFrameCount = 0

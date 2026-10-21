@@ -30,18 +30,22 @@ local CHASSIS_H  = 142   -- web UI chassis box (chassisGeometry h)
 local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
 local DISPLAY_GAP = 8    -- display block to chassis box
 local STATUS_GAP  = 8    -- chassis box to status block
+local STATUS_W    = 210  -- status block (RSTP lines, querier panel, PSU column)
 
+-- The status block keeps a CHASSIS_X margin to the page's right edge, like
+-- the display block's on the left.
 local function pageWidthForModel(model)
-  local rightMargin = 380
+  local rightMargin = STATUS_GAP + STATUS_W + CHASSIS_X
   return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisGeometry(model).w + rightMargin
 end
 
--- Grid columns: as many as the page width fits; rows: ceil(ports / cols).
--- Ports fill column by column (1..rows down the first column, then the
--- next), so the page stays as short as the width allows.
+-- Grid columns: as many as the page width fits with the GRID_X_START margin
+-- kept on the right too; rows: ceil(ports / cols). Ports fill column by
+-- column (1..rows down the first column, then the next), so the page stays
+-- as short as the width allows.
 local function gridDimsForModel(model)
   local pageW = pageWidthForModel(model)
-  local cols  = math.floor((pageW - GRID_X_START + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
+  local cols  = math.floor((pageW - GRID_X_START * 2 + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
   local pc    = getPortCount(model) or 30
   cols = math.max(1, math.min(cols, pc))
   local rows = math.ceil(pc / cols)
@@ -106,23 +110,9 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
   local col2X = x0 + statusW + gap
   local col3X = col2X + nameW + gap
 
-  -- Offline placeholders (static graphics). The controls above them are
-  -- transparent until the runtime paints them with live data, so a design
-  -- that was never emulated still shows a finished header.
-  local textPad = 4
-  local function placeholder(x, y, w, text, align)
-    gfx[#gfx+1] = {
-      Type       = "Text",
-      Text       = text,
-      Position   = { x + textPad, y },
-      Size       = { w - textPad * 2, rowH },
-      Font       = "Roboto",
-      FontSize   = 11,
-      Color      = theme.textMuted,
-      HTextAlign = align or "Left",
-      VTextAlign = "Center",
-    }
-  end
+  -- Grey badge under the transparent status control. No text placeholders:
+  -- Designer keeps the last runtime text offline but drops the runtime fill,
+  -- so a placeholder would show through the stale value.
   gfx[#gfx+1] = {
     Type         = "Rectangle",
     Position     = { x0, row1Y },
@@ -131,11 +121,6 @@ local function defineCommonDeviceInfo(layout, gfx, theme, lumCenterX, ipSpacing)
     StrokeWidth  = 0,
     CornerRadius = 6,
   }
-  placeholder(x0, row1Y, statusW, "Offline", "Center")
-  placeholder(x0, row2Y, statusW, "---", "Center")
-  placeholder(col2X, row1Y, nameW, state.selectedModel or "GigaCore")
-  placeholder(col3X, row1Y, infoW, "---")
-  placeholder(col3X, row2Y, infoW, "---")
 
   layout["Display.Status"] = {
     Style        = "Text",
@@ -288,11 +273,31 @@ end
 -- Status block: the black "screen" the switch web UI draws right of the
 -- chassis. Status dot top-left, RSTP root bridge lines under it, PSU column
 -- at the right (PSU1 label, icon, coupling glyph, icon, PSU2 label).
--- Static placeholders are gfx; the runtime paints the text controls opaque
--- when data lands (paintHeaderBox), pushes a state-tinted PSU icon into
--- PSU.N Icon (Legend IconData, over the grey gfx icon) and the coupling glyph.
+-- The runtime fills the RSTP text controls, pushes a state-tinted PSU icon
+-- into PSU.N Icon (Legend IconData, over the grey gfx icon) and the coupling
+-- glyph. No text placeholders under the RSTP values: Designer keeps the last
+-- runtime text offline, a placeholder would show through it.
 --------------------------------------------------------------------------------
-local STATUS_W = 210
+-- Flat read-only Button whose Legend carries an IconData SVG (Port.Card N,
+-- Chassis.10G N, Querier.Badges). Designer draws a Button's content 2 px
+-- inside its box, so the box grows by that inset (the SVG viewBox is the box
+-- without it).
+local BUTTON_INSET = 2
+local function iconButton(layout, name, x, y, w, h)
+  layout[name] = {
+    Style             = "Button",
+    ButtonStyle       = "Toggle",
+    ButtonVisualStyle = "Flat",
+    Position          = { x - BUTTON_INSET, y - BUTTON_INSET },
+    Size              = { w + BUTTON_INSET * 2, h + BUTTON_INSET * 2 },
+    IsReadOnly        = true,
+    Color             = { 0, 0, 0, 0 },
+    OffColor          = { 0, 0, 0, 0 },
+    StrokeColor       = { 0, 0, 0, 0 },
+    StrokeWidth       = 0,
+    Legend            = "",
+  }
+end
 
 local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
   gfx[#gfx+1] = {
@@ -373,12 +378,14 @@ local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
   local textW   = inW - psuColW - pad
   local line2   = inY + lineH
   text(inX, line2, textW, lineH, "Root bridge", theme.textMuted)
-  text(inX, line2 + lineH, textW, lineH, "---", theme.textMuted)
   valueBox("RSTP.Root Bridge", inX, line2 + lineH, textW)
   local prioW = 44
   text(inX, line2 + lineH * 2, prioW, lineH, "Priority", theme.textMuted)
-  text(inX + prioW, line2 + lineH * 2, textW - prioW, lineH, "---", theme.textMuted)
   valueBox("RSTP.Bridge Priority", inX + prioW, line2 + lineH * 2, textW - prioW)
+
+  -- Querier panel under the Priority line (textW = QUERIER_W at this block
+  -- width). Blank until the runtime draws badges.
+  iconButton(layout, "Querier.Badges", inX, inY + lineH * 4, QUERIER_W, QUERIER_H)
 
   -- PSU column: label, icon in a halo ring, coupling glyph, icon, label
   local colX   = inX + inW - psuColW
@@ -402,9 +409,7 @@ local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
   end
   psu(1)
   cy = cy + labelH + haloD
-  flatButton("Power.Coupling Glyph", colX, cy, psuColW, glyphH, {
-    Font = "Roboto", FontSize = 12, TextColor = { 0, 200, 0, 255 }, HTextAlign = "Center",
-  })
+  flatButton("Power.Coupling Glyph", colX, cy, psuColW, glyphH)
   cy = cy + glyphH
   psu(2)
 end
@@ -465,9 +470,9 @@ local function buildChassisPage(layout, gfx, model, theme)
 
   -- Screen contents: logo + status badge on the first row, then model,
   -- device name, description, IP, gateway (blank when the switch has none),
-  -- firmware + MAC. Static placeholders sit under the transparent controls
-  -- for the offline (never emulated) look; the runtime paints a control
-  -- opaque when live data lands in it.
+  -- firmware + MAC. Only the model line has a static placeholder (the same
+  -- text Display.Model shows); the other lines have none because Designer
+  -- keeps the last runtime text offline and a placeholder would show through.
   local pad   = 5
   local logoH = 28
   local logoW = math.floor(logoH * 3.3 + 0.5)
@@ -502,17 +507,6 @@ local function buildChassisPage(layout, gfx, model, theme)
     Fill         = theme.badgeOffBg,
     StrokeWidth  = 0,
     CornerRadius = 6,
-  }
-  gfx[#gfx+1] = {
-    Type       = "Text",
-    Text       = "Offline",
-    Position   = { statusX, statusY },
-    Size       = { statusW, statusH },
-    Font       = "Roboto",
-    FontSize   = 10,
-    Color      = theme.badgeOffFg,
-    HTextAlign = "Center",
-    VTextAlign = "Center",
   }
   layout["Display.Status"] = {
     Style        = "Text",
@@ -565,7 +559,6 @@ local function buildChassisPage(layout, gfx, model, theme)
     }
   end
   screenText(lineX, line1, lineW, model, theme.textPrimary, true)
-  for i = 1, 5 do screenText(lineX, line1 + lineH * i, lineW, "---", theme.textMuted) end
   local fwW = 44
   screenBox("Display.Model",      lineX, line1, lineW, true)
   screenBox("Device.Name",        lineX, line1 + lineH, lineW)
@@ -578,34 +571,17 @@ local function buildChassisPage(layout, gfx, model, theme)
   -- One IconData Button per port card (Port.Card N) and per 10G frame
   -- (Chassis.10G N). A card box is the card plus CARD_BAR_SPACE on its
   -- MultiLinkX side; a frame box adds FRAME_LABEL_SPACE on the left for the
-  -- rotated label. Designer draws a Button's content 2 px inside its box, so
-  -- every box grows by that inset (the SVG viewBox is the box without it).
-  local buttonInset = 2
-  local function iconButton(name, x, y, w, h)
-    layout[name] = {
-      Style             = "Button",
-      ButtonStyle       = "Toggle",
-      ButtonVisualStyle = "Flat",
-      Position          = { x - buttonInset, y - buttonInset },
-      Size              = { w + buttonInset * 2, h + buttonInset * 2 },
-      IsReadOnly        = true,
-      Color             = { 0, 0, 0, 0 },
-      OffColor          = { 0, 0, 0, 0 },
-      StrokeColor       = { 0, 0, 0, 0 },
-      StrokeWidth       = 0,
-      Legend            = "",
-    }
-  end
+  -- rotated label.
   for port, card in pairs(geometry.cards) do
     local y = chassisY + card.y
     if cardBarOnTop(card) then y = y - CARD_BAR_SPACE end
-    iconButton("Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
+    iconButton(layout, "Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
   end
   local frameIndex = 0
   for _, frame in ipairs(geometry.frames) do
     if frame.tenG then
       frameIndex = frameIndex + 1
-      iconButton("Chassis.10G " .. frameIndex, chassisX + frame.x - FRAME_LABEL_SPACE, chassisY + frame.y,
+      iconButton(layout, "Chassis.10G " .. frameIndex, chassisX + frame.x - FRAME_LABEL_SPACE, chassisY + frame.y,
         frame.w + FRAME_LABEL_SPACE, frame.h)
     end
   end

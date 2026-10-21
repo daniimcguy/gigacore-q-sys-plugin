@@ -677,6 +677,10 @@ function clearPortCards()
   for port = 1, (state.portCount or 0) do
     Controls["Port.Card " .. port].Legend = ""
   end
+  -- Forget the states too: a groups answer landing after a close (in flight,
+  -- or the 3 s reconcile) would otherwise redraw them while offline.
+  state.querierSvg, state.querierByVid = "", {}
+  Controls["Querier.Badges"].Legend = ""
   if not state.chassis then return end
   local index = 0
   for _, frame in ipairs(state.chassis.frames) do
@@ -773,9 +777,6 @@ function subscribeAllSystem()
   end
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/root_bridge_address","action":"add","method":"changes"}}')
   state.ws:Write('{"subscription":{"path":"/spanning_tree/mst/0/root_bridge_priority","action":"add","method":"changes"}}')
-
-  -- IGMP snooping router ports (VLAN 1 is the typical default)
-  state.ws:Write('{"subscription":{"path":"/snooping/vlan/1/router_ports","action":"add","method":"changes"}}')
 
   -- MultiLinkX LAGs: any notification re-reads the whole list (scheduleLagSync)
   state.ws:Write('{"subscription":{"path":"/ports/lags/lag","action":"add","method":"changes"}}')
@@ -1080,7 +1081,13 @@ end
 
 -- MultiLinkX: /api/ports/lags/lag => [{"port_number":66,"link_state":"up",
 -- "members":[25,26],"active_members":[25]},..]. A port in any active_members
--- gets the white bar, a port only in members the magenta one.
+-- gets the white bar, a port only in members the magenta one. The API reports
+-- a LAG's RSTP role and router-port status on its own port number (66 and
+-- up): every member shows them (portCardView, refreshMrPorts), like Araneo.
+state.lagOf             = state.lagOf or {}             -- member port -> LAG port number
+state.lagMembers        = state.lagMembers or {}        -- LAG port number -> { member ports }
+state.lagRoleSubscribed = state.lagRoleSubscribed or {} -- LAG port -> true once its role is subscribed on this socket
+
 function syncLags()
   HttpClient.Get {
     Url     = string.format("http://%s/api/ports/lags/lag", state.baseIP),
@@ -1089,23 +1096,33 @@ function syncLags()
     EventHandler = function(_tbl, code, body, err)
       log("GET /api/ports/lags/lag => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
-      local roles = {}
+      local roles, lagOf, lagMembers = {}, {}, {}
       for lag in body:gmatch("%b{}") do
+        local lagPort = tonumber(lag:match('"port_number"%s*:%s*(%d+)'))
         local members = lag:match('"members"%s*:%s*(%b[])') or ""
         local active  = lag:match('"active_members"%s*:%s*(%b[])') or ""
+        if lagPort then lagMembers[lagPort] = {} end
         for n in members:gmatch("%d+") do
           local port = tonumber(n)
           roles[port] = roles[port] or "member"
+          if lagPort then
+            lagOf[port] = lagPort
+            table.insert(lagMembers[lagPort], port)
+          end
         end
         for n in active:gmatch("%d+") do roles[tonumber(n)] = "active" end
       end
+      local previousLagOf = state.lagOf
+      state.lagOf, state.lagMembers = lagOf, lagMembers
       for port = 1, (state.portCount or 0) do
         local p = getPortState(port)
-        if p.multilinkx ~= roles[port] then
+        if p.multilinkx ~= roles[port] or previousLagOf[port] ~= lagOf[port] then
           p.multilinkx = roles[port]
           renderPortUI(port)
         end
       end
+      refreshMrPorts()
+      subscribeLagRoles()
     end,
   }
 end
@@ -1292,6 +1309,7 @@ function fetchCustomColors()
         local name  = chunk:match('"name"%s*:%s*"([^"]*)"')
         local color = chunk:match('"color"%s*:%s*"(#%x+)"')
         local pre   = chunk:match('"predefined"%s*:%s*(%a+)')
+        local vid   = tonumber(chunk:match('"vid"%s*:%s*(%d+)'))
         if gid and color then
           local rgb = parseHexColor(color)
           if rgb then
@@ -1302,6 +1320,7 @@ function fetchCustomColors()
               name = name or "",
               color = rgb,
               predefined = (pre == "true"),
+              vid = vid,
             }
           end
         end
@@ -1316,6 +1335,8 @@ function fetchCustomColors()
       end
       refreshCustomSlots()
       updatePortGroupChoices()
+      subscribeVlanStates()
+      refreshQuerierBadges()
     end,
   }
 
@@ -1439,6 +1460,13 @@ function openWS(ip)
     log("WebSocket Connected")
     -- The subscription burst, /api/device and /api/power refill these.
     state.modelMismatch, state.psuStates, state.fanStates = nil, {}, {}
+    -- A new socket has no VLAN subscriptions; /api/groups writes them again.
+    -- The redraws blank a previous switch's querier and MR badges (an IP change
+    -- supersedes the old socket without its Closed, so clearPortCards did not run).
+    state.querierByVid, state.routerPortsByVid, state.vlanSubscribed = {}, {}, {}
+    state.lagRoleSubscribed = {}
+    refreshQuerierBadges()
+    refreshMrPorts()
     SetConnection("online")
     local ok, err = pcall(function()
       updateAuthStatus("Authenticated", "#00A000")
@@ -1505,9 +1533,10 @@ end
 --------------------------------------------------------------------------------
 -- Device info formatting
 --------------------------------------------------------------------------------
--- Device-info boxes are transparent at layout time so the static offline
--- placeholders (model name, "---") show through. Paint a box opaque the
--- first time live data lands in it so it covers its placeholder.
+-- Display.Model is transparent at layout time so its static offline
+-- placeholder (the model name) shows through. Paint it opaque when live
+-- data lands so it covers the placeholder. The other device-info boxes have
+-- no placeholder and stay transparent.
 function paintHeaderBox(ctrl)
   local theme = getThemeColors()
   pcall(function() ctrl.Color = rgbHex(theme.pageBg) end)
@@ -1522,20 +1551,18 @@ function updateIPinfo()
   local combined = string.format("%s/%s (%s)", ip, pref, mode)
   if Controls["Display.IP Info"] then
     Controls["Display.IP Info"].String = combined
-    paintHeaderBox(Controls["Display.IP Info"])
   end
 end
 
 -- Device.Actual IP.Default Gateway gets the raw value (0.0.0.0 included).
--- The display line stays blank (but painted over its "---" placeholder)
--- while the switch has no gateway, which the API reports as 0.0.0.0.
+-- The display line stays blank while the switch has no gateway, which the
+-- API reports as 0.0.0.0.
 function updateGateway(ip)
   if not ip then return end
   setPinString("Device.Actual IP.Default Gateway", ip)
   local ctrl = Controls["Display.Gateway"]
   if not ctrl then return end
   ctrl.String = (ip ~= "" and ip ~= "0.0.0.0") and ("Gateway " .. ip) or ""
-  paintHeaderBox(ctrl)
 end
 
 -- Single line: the boxes are one row tall, a wrapped second line was cut.
@@ -1547,16 +1574,12 @@ function formatDeviceDesc(rawDesc)
   return rawDesc
 end
 
--- MAC and firmware boxes are the pins: blank until known (their "---"
--- placeholder shows through), painted opaque once a value lands.
+-- MAC and firmware boxes are the pins: blank until known.
 function updateMac_Firmware()
   for name, value in pairs({ ["Device.MAC Address"]     = state.macAddress,
                              ["Device.Firmware.Active"] = state.firmwareVersion }) do
     local ctrl = Controls[name]
-    if ctrl then
-      ctrl.String = value or ""
-      if (value or "") ~= "" then paintHeaderBox(ctrl) end
-    end
+    if ctrl then ctrl.String = value or "" end
   end
 end
 
@@ -1610,7 +1633,6 @@ function handleDevicePath(path, raw)
     local v = extractString(raw)
     if v and Controls["Device.Name"] then
       Controls["Device.Name"].String = formatDeviceName(v)
-      paintHeaderBox(Controls["Device.Name"])
     end
     return true
   end
@@ -1619,7 +1641,6 @@ function handleDevicePath(path, raw)
     local v = extractString(raw)
     if v and Controls["Device.Description"] then
       Controls["Device.Description"].String = formatDeviceDesc(v)
-      paintHeaderBox(Controls["Device.Description"])
     end
     return true
   end
@@ -1924,20 +1945,6 @@ function SetFanSpeed(id, v)
   setPinValue("Fans.Fan " .. id .. ".Speed", v)
 end
 
--- Badge background for a health state string as the API reports it
--- (good / warning / absent / anything else = error).
-local function healthColor(status)
-  local theme = getThemeColors()
-  if status == "good" or status == "ok" or status == "redundant" then
-    return rgbHex(theme.badgeOkBg)
-  elseif status == "warning" then
-    return rgbHex(theme.badgeWarnBg)
-  elseif status == "absent" or status == "" then
-    return rgbHex(theme.badgeOffBg)
-  end
-  return rgbHex(theme.badgeErrBg)
-end
-
 -- PSU icon tinted by state, as the switch web UI draws it. The color lives
 -- in the SVG itself, pushed through the Button Legend as EzSVG does
 -- ({DrawChrome=false, IconData=<base64 svg>}). Same paths as LogoPSU (the
@@ -1988,27 +1995,39 @@ function SetRlinkxEnabled(value)
 end
 
 -- Coupling indicator between the two PSU icons, as the switch web UI draws
--- it: "▼▲" in redundant mode, "⊕" in shared mode. The glyph sits on the
--- screen background while the coupling state is good and takes the warning
--- or error badge color otherwise. With a PSU slot empty (state.psuMissing,
--- from /api/power) the switch reports "No redundancy because only 1 PSU is
--- powered" as a coupling warning; the plugin leaves that one unpainted.
+-- it: "▼▲" in redundant mode, "⊕" in shared mode, the glyph itself colored
+-- by the coupling state (green good, amber warning, red otherwise, the PSU
+-- icon palette) on the screen background. Drawn as an SVG through the Button
+-- Legend like the PSU icons; the viewBox is the 48 x 14 box minus the 2 px
+-- Button inset. With a PSU slot empty (state.psuMissing, from /api/power) the
+-- switch reports "No redundancy because only 1 PSU is powered" as a coupling
+-- warning; the plugin keeps that one green.
 state.couplingMode  = state.couplingMode  or ""
 state.couplingState = state.couplingState or "good"
 state.psuMissing    = state.psuMissing    or false
 
-local function refreshCoupling()
-  local glyph = ""
-  if state.couplingMode == "redundant" then glyph = "▼▲"
-  elseif state.couplingMode == "shared" then glyph = "⊕"
+local function couplingGlyphSvg(mode, color)
+  local body
+  if mode == "redundant" then
+    body = '<path d="M13,1 H21 L17,9 Z" fill="' .. color .. '"/><path d="M23,9 H31 L27,1 Z" fill="' .. color .. '"/>'
+  elseif mode == "shared" then
+    body = '<circle cx="22" cy="5" r="4" fill="none" stroke="' .. color .. '" stroke-width="1.5"/>'
+      .. '<path d="M18,5 H26 M22,1 V9" stroke="' .. color .. '" stroke-width="1.5"/>'
+  else
+    return nil
   end
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="10" viewBox="0 0 44 10">' .. body .. '</svg>'
+end
+
+local function refreshCoupling()
   local c = Controls["Power.Coupling Glyph"]
   if not c then return end
-  c.Legend = glyph
-  local color = "#00000000"
-  if state.couplingState ~= "good" and not state.psuMissing then color = healthColor(state.couplingState) end
-  c.Color = color
-  pcall(function() c.OffColor = color end)
+  local color = "#DC2828"
+  if state.couplingState == "good" or state.psuMissing then color = PSU_ICON_COLORS.good
+  elseif state.couplingState == "warning" then color = PSU_ICON_COLORS.warning
+  end
+  local svg = couplingGlyphSvg(state.couplingMode, color)
+  c.Legend = svg and iconLegend(svg) or ""
 end
 
 function SetPowerCoupling(mode)
@@ -2033,7 +2052,6 @@ end
 
 function SetBridgePriority(v)
   setCtrlString("RSTP.Bridge Priority", tostring(v))
-  paintHeaderBox(Controls["RSTP.Bridge Priority"])
 end
 
 state.bridgeAddr     = state.bridgeAddr     or ""
@@ -2051,7 +2069,6 @@ local function refreshRootBridge()
     local pri  = state.rootBridgePri  ~= "" and state.rootBridgePri  or "?"
     setCtrlString("RSTP.Root Bridge", string.format("%s (%s)", addr, pri))
   end
-  paintHeaderBox(Controls["RSTP.Root Bridge"])
 end
 
 function SetBridgeAddress(addr)
@@ -2069,25 +2086,45 @@ function SetRootBridgePriority(pri)
   refreshRootBridge()
 end
 
--- RSTP role per port; only "root" is drawn, as the "R" badge inside the
--- port card (portCardView root).
+-- RSTP role per port; "root" and "alternate" are drawn as the Araneo "root" /
+-- "alt" badges inside the port card (portCardView rstpRole). A LAG port's
+-- role (66 and up) is drawn on its members.
 function SetPortRstpRole(port, role)
   local p = getPortState(port)
   if p.rstpRole == role then return end
   p.rstpRole = role
   renderPortUI(port)
+  for _, member in ipairs(state.lagMembers[port] or {}) do renderPortUI(member) end
 end
 
--- IGMP snooping router ports; the MR badge is drawn inside the port card.
-function SetMrPorts(portList)
+-- The per-port role subscriptions cover the chassis ports only: each LAG port
+-- from /api/ports/lags/lag gets its own, once per socket.
+function subscribeLagRoles()
+  if not state.ws then return end
+  for lagPort in pairs(state.lagMembers) do
+    if not state.lagRoleSubscribed[lagPort] then
+      state.lagRoleSubscribed[lagPort] = true
+      state.ws:Write(string.format(
+        '{"subscription":{"path":"/spanning_tree/mst/0/ports/%d/role","action":"add","method":"changes"}}', lagPort))
+    end
+  end
+end
+
+-- IGMP snooping router ports: like Araneo, a port is MR when it, or the LAG
+-- it is a member of, is a router port in any group VLAN
+-- (state.routerPortsByVid, one WS subscription per vid); the MR badge is
+-- drawn inside the port card.
+function refreshMrPorts()
   local routerPorts = {}
-  if type(portList) == "table" then
-    for _, p in ipairs(portList) do routerPorts[tonumber(p)] = true end
+  for _, ports in pairs(state.routerPortsByVid) do
+    for _, port in ipairs(ports) do routerPorts[port] = true end
   end
   for port = 1, state.portCount do
     local p = getPortState(port)
-    if p.mr ~= (routerPorts[port] == true) then
-      p.mr = routerPorts[port] == true
+    local lag = state.lagOf[port]
+    local mr = routerPorts[port] == true or (lag ~= nil and routerPorts[lag] == true)
+    if p.mr ~= mr then
+      p.mr = mr
       renderPortUI(port)
     end
   end
@@ -2195,14 +2232,21 @@ function handleSpanningTreePath(path, raw)
 end
 
 function handleSnoopingPath(path, raw)
-  if path:find("/snooping/vlan/%d+/router_ports") then
+  local routerVid = path:match("^/snooping/vlan/(%d+)/router_ports$")
+  if routerVid then
     -- new_value is an array: "new_value":[3,5,7]
     local arr = raw:match('"new_value"%s*:%s*%[(.-)%]')
     local ports = {}
     if arr then
       for n in arr:gmatch("%d+") do ports[#ports+1] = tonumber(n) end
     end
-    SetMrPorts(ports)
+    state.routerPortsByVid[tonumber(routerVid)] = ports
+    refreshMrPorts()
+    return true
+  end
+  local vid = path:match("^/snooping/vlan/(%d+)/igmp_querier_state$")
+  if vid then
+    local v = extractString(raw); if v then SetQuerierState(tonumber(vid), v) end
     return true
   end
   return false
@@ -2249,6 +2293,77 @@ function SetDeviceStatus(status)
       offlinePulseTimer:Start(0.5)
     end
   end
+end
+
+--------------------------------------------------------------------------------
+-- Querier panel (status block, under the RSTP lines): one badge per group this
+-- switch is the active IGMP querier for. The state comes only from the WS
+-- subscription /snooping/vlan/<vid>/igmp_querier_state, one per group vid
+-- learned from /api/groups (it answers with the current value at once). The
+-- same vids carry the MR subscriptions /snooping/vlan/<vid>/router_ports.
+--------------------------------------------------------------------------------
+state.querierByVid     = state.querierByVid or {}      -- vid -> disabled | querier | non-querier
+state.routerPortsByVid = state.routerPortsByVid or {}  -- vid -> { router port numbers }
+state.vlanSubscribed   = state.vlanSubscribed or {}    -- vid -> true once subscribed on this socket
+state.querierSvg       = state.querierSvg or ""        -- last SVG written to Querier.Badges
+
+-- A vid no group uses any more is forgotten (its VLAN is gone, and the switch
+-- may drop the subscription with it): a vid that comes back is subscribed
+-- again and shows no stale state.
+function subscribeVlanStates()
+  local used = {}
+  for _, g in ipairs(state.groupList) do
+    if g.vid then used[g.vid] = true end
+  end
+  for vid in pairs(state.vlanSubscribed) do
+    if not used[vid] then state.vlanSubscribed[vid] = nil end
+  end
+  for vid in pairs(state.querierByVid) do
+    if not used[vid] then state.querierByVid[vid] = nil end
+  end
+  local forgotRouterPorts = false
+  for vid in pairs(state.routerPortsByVid) do
+    if not used[vid] then
+      state.routerPortsByVid[vid] = nil
+      forgotRouterPorts = true
+    end
+  end
+  if forgotRouterPorts then refreshMrPorts() end
+  if not state.ws then return end
+  for _, g in ipairs(state.groupList) do
+    if g.vid and not state.vlanSubscribed[g.vid] then
+      state.vlanSubscribed[g.vid] = true
+      state.ws:Write(string.format(
+        '{"subscription":{"path":"/snooping/vlan/%d/igmp_querier_state","action":"add","method":"changes"}}', g.vid))
+      state.ws:Write(string.format(
+        '{"subscription":{"path":"/snooping/vlan/%d/router_ports","action":"add","method":"changes"}}', g.vid))
+    end
+  end
+end
+
+-- The subscription answers arrive one vid at a time: one redraw per burst.
+function SetQuerierState(vid, value)
+  state.querierByVid[vid] = value
+  if state.querierRefreshPending then return end
+  state.querierRefreshPending = true
+  Timer.CallAfter(function()
+    state.querierRefreshPending = false
+    refreshQuerierBadges()
+  end, 0.2)
+end
+
+function refreshQuerierBadges()
+  local list = {}
+  for _, g in ipairs(state.groupList) do
+    if g.vid and state.querierByVid[g.vid] == "querier" then
+      list[#list + 1] = { id = g.id, color = rgbHex(g.color) }
+    end
+  end
+  table.sort(list, function(a, b) return a.id < b.id end)
+  local svg = querierBadgesSvg(list, rgbHex(getThemeColors().textMuted))
+  if svg == state.querierSvg then return end
+  state.querierSvg = svg
+  Controls["Querier.Badges"].Legend = svg == "" and "" or iconLegend(svg)
 end
 
 --------------------------------------------------------------------------------

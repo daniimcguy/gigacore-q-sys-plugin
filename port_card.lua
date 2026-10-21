@@ -98,9 +98,19 @@ local function disabledIcon(view, jx, jy, jw, jh)
     .. " L" .. point(x + 2, y + 5) .. '" stroke="#00011F" stroke-width="1" fill="none"/>'
 end
 
-local function badge(x, y, w, h, label)
-  return rectElement(x + 0.5, y + 0.5, w - 1, h - 1, 'rx="1.5" fill="#101828" stroke="#fff" stroke-width="1"')
-    .. textElement(x + w / 2, y + h / 2, 8, "#fff", label)
+-- Araneo port badges: the RSTP role (root / alternate) and the IGMP multicast
+-- router port, white-bordered, packed from the left over the number row.
+local BADGE_W, BADGE_H = 20, 16
+local RSTP_BADGE = {
+  root      = { fill = "#a56de2", rx = 3, text = "#000", label = "root" },
+  alternate = { fill = "#c6262e", rx = 0, text = "#fff", label = "alt" },
+}
+local MR_BADGE = { fill = "#000", rx = 3, text = "#fff", label = "MR" }
+
+local function badge(x, centreY, style)
+  return rectElement(x + 0.75, centreY - BADGE_H / 2 + 0.75, BADGE_W - 1.5, BADGE_H - 1.5, 'rx="' .. style.rx
+      .. '" fill="' .. style.fill .. '" stroke="#fff" stroke-width="1.5"')
+    .. textElement(x + BADGE_W / 2, centreY, 8, style.text, style.label)
 end
 
 -- Card drawn with its own box at the local origin (no MultiLinkX bar space).
@@ -141,18 +151,12 @@ local function portCardBody(view)
     table.insert(parts, '<path d="M1,9 L1,3 Q1,0.5 3.5,0.5 L9.5,0.5 Z" fill="#00011f"/>')
   end
 
-  if view.mr or view.root then
-    local mrRect, rootRect
-    if isFullHeight(view.kind) then
-      mrRect, rootRect = { w - 18, 2, 16, 11 }, { 2, h - 13, 11, 11 }
-    else
-      -- Half-height cards have no free corner: the badges sit in the band
-      -- between the number and the jack, either side of the PoE square.
-      local bandY = (view.direction == "ttb") and 18 or (h - 28)
-      mrRect, rootRect = { w - 15, bandY, 14, 10 }, { 2, bandY, 11, 10 }
-    end
-    if view.mr then table.insert(parts, badge(mrRect[1], mrRect[2], mrRect[3], mrRect[4], "MR")) end
-    if view.root then table.insert(parts, badge(rootRect[1], rootRect[2], rootRect[3], rootRect[4], "R")) end
+  -- Like Araneo, the badges cover the number (and the trunk triangle on a ttb card).
+  local badges = {}
+  if RSTP_BADGE[view.rstpRole] then table.insert(badges, RSTP_BADGE[view.rstpRole]) end
+  if view.mr then table.insert(badges, MR_BADGE) end
+  for slot, style in ipairs(badges) do
+    table.insert(parts, badge(1 + (slot - 1) * BADGE_W, numberY, style))
   end
 
   return table.concat(parts)
@@ -184,7 +188,7 @@ function offlineCardView(card, port)
     kind = card.kind, direction = card.direction, w = card.w, h = card.h, number = port,
     cardFill = nil, enabled = true, notPresent = false,
     linkFill = "#000", jackBorder = CARD_BORDER_COLOR, poeFill = "#d6d7d7", poeBorder = "#d6d7d7",
-    trunk = false, mlx = nil, mr = false, root = false,
+    trunk = false, mlx = nil, mr = false, rstpRole = nil,
   }
 end
 
@@ -217,6 +221,11 @@ function portCardView(port, card)
   -- Triangle whenever the reported membership is not a resolved group:
   -- trunk, unresolved id or type none (port.vue isTrunk).
   local isTrunk = p.memberOfKnown == true and (memberOf == nil or memberOf:sub(1, 6) == "Trunk:" or color == nil)
+  -- RSTP role: the port's own root / alternate, else the role of its LAG (the
+  -- API reports a MultiLinkX link's role on the LAG port, 66 and up).
+  local rstpRole = p.rstpRole
+  local lag = state.lagOf[port] and state.ports[state.lagOf[port]]
+  if rstpRole ~= "root" and rstpRole ~= "alternate" and lag then rstpRole = lag.rstpRole end
   return {
     kind = card.kind, direction = card.direction, w = card.w, h = card.h, number = port,
     cardFill = cardFill,
@@ -229,7 +238,7 @@ function portCardView(port, card)
     trunk = isTrunk,
     mlx = MULTILINKX_BAR[p.multilinkx],
     mr = p.mr == true,
-    root = p.rstpRole == "root",
+    rstpRole = rstpRole,
   }
 end
 
@@ -248,6 +257,47 @@ function tenGFrameSvg(frame)
   local w, h = frame.w + FRAME_LABEL_SPACE, frame.h
   return '<svg xmlns="http://www.w3.org/2000/svg" width="' .. svgNumber(w) .. '" height="' .. svgNumber(h)
     .. '" viewBox="0 0 ' .. svgNumber(w) .. " " .. svgNumber(h) .. '">' .. frameBody(frame) .. '</svg>'
+end
+
+-- Querier panel of the status block: a "Querier" title line, then one badge
+-- per group this switch is the IGMP querier for, 9 per row on 4 rows (13 px
+-- badges in the status block's 145 px text column). Past 36 groups the last
+-- slot counts the groups left out.
+QUERIER_W = 145
+QUERIER_H = 74
+local QUERIER_TITLE_H = 14
+local QUERIER_BADGE = 13
+local QUERIER_PITCH = 15
+local QUERIER_PER_ROW = 9
+local QUERIER_SLOTS = 36
+local QUERIER_NUMBER_SIZE = 8
+local QUERIER_OVERFLOW_FILL = "#424242"
+
+local function querierBadge(slot, fill, label)
+  local x = ((slot - 1) % QUERIER_PER_ROW) * QUERIER_PITCH
+  local y = QUERIER_TITLE_H + math.floor((slot - 1) / QUERIER_PER_ROW) * QUERIER_PITCH
+  local half = QUERIER_BADGE / 2
+  return rectElement(x, y, QUERIER_BADGE, QUERIER_BADGE, 'rx="3" fill="' .. fill .. '"')
+    .. textElement(x + half, y + half, QUERIER_NUMBER_SIZE, numberColor(fill), label)
+end
+
+-- groups: array of { id, color = "#RRGGBB" } sorted by id; "" when empty.
+function querierBadgesSvg(groups, titleColor)
+  if #groups == 0 then return "" end
+  local parts = { '<svg xmlns="http://www.w3.org/2000/svg" width="' .. QUERIER_W .. '" height="' .. QUERIER_H
+    .. '" viewBox="0 0 ' .. QUERIER_W .. " " .. QUERIER_H .. '">',
+    '<text x="0" y="' .. svgNumber(baseline(QUERIER_TITLE_H / 2, 10)) .. '" ' .. FONT .. ' font-size="10" fill="'
+      .. titleColor .. '">Querier</text>' }
+  local drawn = #groups
+  if drawn > QUERIER_SLOTS then drawn = QUERIER_SLOTS - 1 end
+  for slot = 1, drawn do
+    table.insert(parts, querierBadge(slot, groups[slot].color, tostring(groups[slot].id)))
+  end
+  if drawn < #groups then
+    table.insert(parts, querierBadge(QUERIER_SLOTS, QUERIER_OVERFLOW_FILL, "+" .. (#groups - drawn)))
+  end
+  table.insert(parts, '</svg>')
+  return table.concat(parts)
 end
 
 -- Whole chassis box as drawn offline: frame, dividers and always-shown speed

@@ -111,6 +111,12 @@ New pins:
   only with the 10g licence active); a speed the switch rejects flashes
   "Rejected" on the cell and the API reason goes to the debug log.
 - New **PoE Bounce** button next to PoE toggle (disables 3s, re-enables).
+- Querier panel in the status block: a badge per group this switch is the
+  IGMP querier for, hidden when none.
+- Port cards carry Araneo-style badges over the port number: `root` / `alt`
+  for the RSTP root / alternate port, `MR` for a port that is an IGMP
+  multicast router port in any group VLAN (was VLAN 1 only).
+- Main page narrower: the empty space right of the status block is gone.
 
 ### Groups and Trunks tab
 - Page renamed "Groups" → "Groups and Trunks" with four sections:
