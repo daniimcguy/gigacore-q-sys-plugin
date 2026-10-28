@@ -123,6 +123,21 @@ New pins:
   Predefined Groups (5×4 grid), Custom Groups, Predefined Trunks, Custom
   Trunks. Trunk cards carry the ◤ corner indicator.
 
+### Switch load
+- Reconnects back off (5, 10, 20, 40, then every 60 s) instead of retrying
+  every 5 s: each reconnect replays every subscription and two REST
+  re-syncs, which kept a switch that accepts and then drops the connection
+  near 70 % CPU. The Connect button, or a connection that holds 60 s,
+  brings the delay back to 5 s.
+- A periodic re-sync is skipped while the previous one is still waiting for
+  answers, and the re-sync 3 s after connect is dropped if the connection
+  closed in between.
+- Poll Interval no longer offers 5 s (about 5 points of switch CPU); a design
+  saved with 5 s polls every 15 s.
+- Subscriptions only for the groups that exist and the PoE ports of a PoE
+  unit (the switch rejected about 90 subscriptions at every connect on a
+  30i).
+
 ---
 
 ## [v0.1.1] - 2026-02-20

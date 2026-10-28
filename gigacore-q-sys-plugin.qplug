@@ -720,8 +720,6 @@ function subscribeAllPorts()
   for i = 1, state.portCount do
     state.ws:Write(string.format('{"subscription":{"path":"/ports/port/%d/link_state","action":"add","method":"changes"}}', i))
     state.ws:Write(string.format('{"subscription":{"path":"/ports/port/%d/member_of","action":"add","method":"changes"}}', i))
-    state.ws:Write(string.format('{"subscription":{"path":"/poe/ports/%d/indication","action":"add","method":"changes"}}', i))
-    state.ws:Write(string.format('{"subscription":{"path":"/poe/ports/%d/enabled","action":"add","method":"changes"}}', i))
     state.ws:Write(string.format('{"subscription":{"path":"/ports/port/%d/rlinkx","action":"add","method":"changes"}}', i))
     state.ws:Write(string.format('{"subscription":{"path":"/rlinkx/ports/%d/state","action":"add","method":"changes"}}', i))
     state.ws:Write(string.format('{"subscription":{"path":"/ports/port/%d/legend","action":"add","method":"changes"}}', i))
@@ -784,18 +782,43 @@ function subscribeAllSystem()
   state.ws:Write('{"subscription":{"path":"/ports/lags/lag","action":"add","method":"changes"}}')
 end
 
--- Subscribe to /groups/group/N/name notifications for IDs 1..MAX_GROUPS so
--- name renames (incl. custom groups) reflect live in the UI. The API
--- supports up to 50+ groups; widening the WS subscription range covers the
--- typical custom-group range without flooding.
-MAX_GROUPS = 60
+-- The switch answers a subscription under a group or PoE port that does not
+-- exist with an error message, so these two follow the REST answers instead
+-- of fixed ranges. Both flags are reset at Connected.
 
-function subscribeAllGroups()
+-- PoE paths only on a PoE unit ("poe" active in /api/features) and only for
+-- the model's PoE ports. Runs on every features answer: a PoE licence
+-- activated later is picked up by the next reconcile.
+state.poeSubscribed = state.poeSubscribed or false
+
+function subscribePoePorts()
+  if not state.ws or not state.hasPoe or state.poeSubscribed then return end
+  state.poeSubscribed = true
+  for i = 1, getPoeCount(resolveModel(Properties)) do
+    state.ws:Write(string.format('{"subscription":{"path":"/poe/ports/%d/indication","action":"add","method":"changes"}}', i))
+    state.ws:Write(string.format('{"subscription":{"path":"/poe/ports/%d/enabled","action":"add","method":"changes"}}', i))
+  end
+end
+
+-- Name and id notifications for the groups of the last /api/groups answer
+-- (renames show live; a new group is picked up by the next reconcile). A
+-- group gone from the list is forgotten, so it is subscribed again if it
+-- comes back.
+state.groupSubscribed = state.groupSubscribed or {}
+
+function subscribeGroups()
+  local present = {}
+  for _, g in ipairs(state.groupList) do present[g.id] = true end
+  for id in pairs(state.groupSubscribed) do
+    if not present[id] then state.groupSubscribed[id] = nil end
+  end
   if not state.ws then return end
-
-  for i = 1, MAX_GROUPS do
-    state.ws:Write(string.format('{"subscription":{"path":"/groups/group/%d/name","action":"add","method":"changes"}}', i))
-    state.ws:Write(string.format('{"subscription":{"path":"/groups/group/%d/group_id","action":"add","method":"changes"}}', i))
+  for _, g in ipairs(state.groupList) do
+    if not state.groupSubscribed[g.id] then
+      state.groupSubscribed[g.id] = true
+      state.ws:Write(string.format('{"subscription":{"path":"/groups/group/%d/name","action":"add","method":"changes"}}', g.id))
+      state.ws:Write(string.format('{"subscription":{"path":"/groups/group/%d/group_id","action":"add","method":"changes"}}', g.id))
+    end
   end
 end
 
@@ -882,10 +905,24 @@ end
 --
 -- WebSocket subscriptions are the live path, but a notification missed
 -- during the subscription storm at connect stays wrong until that value
--- changes again. Three bulk GETs (/api/ports, /api/poe/ports, /api/rlinkx)
--- re-apply every port's state through the same setters the WS handlers use.
--- They run right after connect, again 3 s later, then every Poll Interval.
+-- changes again. Nine bulk GETs (reconcileAll) re-apply the state through the
+-- same setters the WS handlers use. They run right after connect, again 3 s
+-- later, then every Poll Interval.
 --------------------------------------------------------------------------------
+
+-- Reconcile GETs still waiting for their answer. Each has a 10 s Timeout and
+-- a timeout still calls its handler, so the count always drains. The poll
+-- tick and the 3 s follow-up wait for the previous batch (reconcileIfIdle):
+-- a slow switch never gets a second batch on top of the first.
+state.getsInFlight = state.getsInFlight or 0
+
+local function counted(handler)
+  state.getsInFlight = state.getsInFlight + 1
+  return function(...)
+    state.getsInFlight = state.getsInFlight - 1
+    return handler(...)
+  end
+end
 
 -- Split a JSON array body into its top-level "{...}" elements by walking
 -- brace positions with string.find (a per-character loop over a 50 KB body
@@ -921,7 +958,7 @@ function syncRlinkxState()
       getAuthHeaders()
     ),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/rlinkx => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       -- Top-level "enabled" (switch-wide flag), matched once ports[] is out
@@ -932,7 +969,7 @@ function syncRlinkxState()
         local n = tonumber(portNum)
         if n and n <= (state.portCount or 0) then SetPortRlinkxState(n, stateStr) end
       end
-    end,
+    end),
   }
 end
 
@@ -1013,13 +1050,13 @@ function syncAllPorts()
       getAuthHeaders()
     ),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/ports => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local arr = body:match('"port"%s*:%s*(%b[])')
       if not arr then return end
       for _, elem in ipairs(splitJsonObjects(arr)) do applyPortObject(elem) end
-    end,
+    end),
   }
 end
 
@@ -1030,7 +1067,8 @@ function syncPoePorts()
       { ["Content-Type"] = "application/json" },
       getAuthHeaders()
     ),
-    EventHandler = function(_tbl, code, body, _err)
+    Timeout = 10,
+    EventHandler = counted(function(_tbl, code, body, _err)
       if code ~= 200 or type(body) ~= "string" then return end
       for _, elem in ipairs(splitJsonObjects(body)) do
         local top = splitNested(elem)
@@ -1045,7 +1083,7 @@ function syncPoePorts()
           renderPortUI(port)
         end
       end
-    end,
+    end),
   }
 end
 
@@ -1063,7 +1101,7 @@ function syncFeatures()
       getAuthHeaders()
     ),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/features => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local active = body:match('"active"%s*:%s*(%b[])') or ""
@@ -1077,7 +1115,8 @@ function syncFeatures()
       if state.hasPoe ~= before[1] or state.fiberPossible ~= before[2] or state.fiberActive ~= before[3] then
         for port = 1, (state.portCount or 0) do renderPortUI(port) end
       end
-    end,
+      subscribePoePorts()
+    end),
   }
 end
 
@@ -1095,7 +1134,7 @@ function syncLags()
     Url     = string.format("http://%s/api/ports/lags/lag", state.baseIP),
     Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/ports/lags/lag => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local roles, lagOf, lagMembers = {}, {}, {}
@@ -1125,7 +1164,7 @@ function syncLags()
       end
       refreshMrPorts()
       subscribeLagRoles()
-    end,
+    end),
   }
 end
 
@@ -1153,6 +1192,15 @@ function reconcileAll()
   syncSpanningTree()
 end
 
+-- The poll tick and the 3 s follow-up; the reconcile at Connected always runs.
+function reconcileIfIdle()
+  if state.getsInFlight > 0 then
+    log("reconcile skipped: " .. state.getsInFlight .. " GETs still in flight")
+    return
+  end
+  reconcileAll()
+end
+
 --------------------------------------------------------------------------------
 -- Status block snapshots (REST). The WebSocket only reports changes, so a
 -- PSU state or root bridge that never changes after connect would otherwise
@@ -1165,7 +1213,7 @@ function syncPowerStatus()
     Url     = string.format("http://%s/api/power", state.baseIP),
     Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/power => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local total = body:match('"total_power_usage"%s*:%s*(%d+)')
@@ -1208,7 +1256,7 @@ function syncPowerStatus()
         if cstat then SetCouplingState(cstat) end
         if mode  then SetPowerCoupling(mode) end
       end
-    end,
+    end),
   }
 end
 
@@ -1219,7 +1267,7 @@ function syncSpanningTree()
     Url     = string.format("http://%s/api/spanning_tree/mst/0", state.baseIP),
     Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/spanning_tree/mst/0 => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       local flat = body:gsub("%b[]", "[]")
@@ -1238,12 +1286,15 @@ function syncSpanningTree()
         local role = obj:match('"role"%s*:%s*"([^"]+)"')
         if n and role then SetPortRstpRole(tonumber(n), role) end
       end
-    end,
+    end),
   }
 end
 
+-- A design saved with the former "5 s" choice polls every 15 s.
 function pollIntervalSeconds()
-  return tonumber(Properties["Poll Interval"].Value:match("(%d+)")) or 0   -- "Off" => 0
+  local secs = tonumber(Properties["Poll Interval"].Value:match("(%d+)")) or 0   -- "Off" => 0
+  if secs > 0 and secs < 15 then return 15 end
+  return secs
 end
 
 function startPollTimer()
@@ -1252,7 +1303,7 @@ function startPollTimer()
   log("poll interval: " .. secs .. " s")
   if secs <= 0 then return end
   state.pollTimer = Timer.New()
-  state.pollTimer.EventHandler = function() reconcileAll() end
+  state.pollTimer.EventHandler = function() reconcileIfIdle() end
   state.pollTimer:Start(secs)
 end
 
@@ -1290,7 +1341,7 @@ function fetchCustomColors()
       getAuthHeaders()
     ),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/groups => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       state.groupList = {}
@@ -1337,9 +1388,10 @@ function fetchCustomColors()
       end
       refreshCustomSlots()
       updatePortGroupChoices()
+      subscribeGroups()
       subscribeVlanStates()
       refreshQuerierBadges()
-    end,
+    end),
   }
 
   -- Trunks
@@ -1350,7 +1402,7 @@ function fetchCustomColors()
       getAuthHeaders()
     ),
     Timeout = 10,
-    EventHandler = function(_tbl, code, body, err)
+    EventHandler = counted(function(_tbl, code, body, err)
       log("GET /api/trunks => HTTP " .. tostring(code) .. " body=" .. type(body) .. " " .. tostring(err or ""))
       if code ~= 200 or type(body) ~= "string" then return end
       state.trunkList = {}
@@ -1392,7 +1444,7 @@ function fetchCustomColors()
       for p = 1, state.portCount do renderPortUI(p) end
       refreshCustomSlots()
       updatePortGroupChoices()
-    end,
+    end),
   }
 end
 
@@ -1431,15 +1483,24 @@ end
 --------------------------------------------------------------------------------
 -- WebSocket lifecycle
 --------------------------------------------------------------------------------
+-- Reconnect backoff: 5 s, doubled after every attempt up to 60 s. Every
+-- connect replays the whole subscription burst and two reconciles (~70 % CPU
+-- on a 30i when looped every 5 s), so a switch that accepts the socket and
+-- drops it is not hammered. A connection that holds 60 s (Connected) and the
+-- Connect button (connectToSwitch) bring it back to 5 s.
+state.reconnectDelay = state.reconnectDelay or 5
+
 function scheduleReconnect()
   if state.reconnectTimer then return end
+  local delay = state.reconnectDelay
+  state.reconnectDelay = math.min(delay * 2, 60)
   state.reconnectTimer = Timer.New()
   state.reconnectTimer.EventHandler = function()
     state.reconnectTimer:Stop()
     state.reconnectTimer = nil
     if state.baseIP and state.baseIP ~= "" then openWS(state.baseIP) end
   end
-  state.reconnectTimer:Start(5)
+  state.reconnectTimer:Start(delay)
 end
 
 function openWS(ip)
@@ -1466,22 +1527,25 @@ function openWS(ip)
     -- The redraws blank a previous switch's querier and MR badges (an IP change
     -- supersedes the old socket without its Closed, so clearPortCards did not run).
     state.querierByVid, state.routerPortsByVid, state.vlanSubscribed = {}, {}, {}
-    state.lagRoleSubscribed = {}
+    state.lagRoleSubscribed, state.groupSubscribed, state.poeSubscribed = {}, {}, false
     refreshQuerierBadges()
     refreshMrPorts()
     SetConnection("online")
     local ok, err = pcall(function()
       updateAuthStatus("Authenticated", "#00A000")
       subscribeAllPorts()
-      subscribeAllGroups()
       subscribeAllSystem()
       SetDeviceStatus("online")
       fetchDeviceInfo()
     end)
     if not ok then log("Connected handler error (subscriptions): " .. tostring(err)) end
+    -- The follow-up reconcile and the backoff reset belong to this socket:
+    -- skipped once it has closed or been superseded.
+    local function stillOnline() return state.ws == thisWs and state.connection == "online" end
     ok, err = pcall(function()
       reconcileAll()
-      Timer.CallAfter(reconcileAll, 3)
+      Timer.CallAfter(function() if stillOnline() then reconcileIfIdle() end end, 3)
+      Timer.CallAfter(function() if stillOnline() then state.reconnectDelay = 5 end end, 60)
       startPollTimer()
     end)
     if not ok then log("Connected handler error (reconcile): " .. tostring(err)) end
@@ -3342,13 +3406,14 @@ function GetProperties(props)
       Choices = { "Yes", "No" },
       Value   = "Yes",
     },
-    -- Periodic REST re-sync of every port (link, enable, legend, group,
-    -- speed, PoE, RLinkX) in three bulk GETs, so a WebSocket notification
-    -- missed during the subscription storm heals itself.
+    -- Periodic REST re-sync (reconcileAll) of every port, PoE, RLinkX, LAG,
+    -- group, power and spanning tree state, so a WebSocket notification missed
+    -- during the subscription storm heals itself. No 5 s choice: it costs the
+    -- switch about 5 points of CPU.
     {
       Name    = "Poll Interval",
       Type    = "enum",
-      Choices = { "Off", "5 s", "15 s", "30 s", "60 s" },
+      Choices = { "Off", "15 s", "30 s", "60 s" },
       Value   = "15 s",
     },
   }
@@ -5102,6 +5167,7 @@ if Controls then
       return
     end
     state.baseIP = ip
+    state.reconnectDelay = 5
     SetConnection("connecting")
     openWS(state.baseIP)
   end

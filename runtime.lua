@@ -18,6 +18,7 @@ local function connectToSwitch()
     return
   end
   state.baseIP = ip
+  state.reconnectDelay = 5
   SetConnection("connecting")
   openWS(state.baseIP)
 end
