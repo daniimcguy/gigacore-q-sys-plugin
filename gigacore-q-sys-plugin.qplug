@@ -3774,10 +3774,18 @@ function GetControls(props)
   c[#c+1] = {
     Name        = "Auth.Password",
     ControlType = "Text",
-    TextBoxType = "Password",
     PinStyle    = "None",
     UserPin     = false,
     Value       = "",
+  }
+  
+  -- Bullets shown under the password box (its own text is transparent).
+  c[#c+1] = {
+    Name        = "Auth.Masked Password",
+    ControlType = "Indicator",
+    IndicatorType = "Text",
+    PinStyle    = "None",
+    UserPin     = false,
   }
   
   c[#c+1] = {
@@ -3887,10 +3895,11 @@ function GetControlLayout(props)
   
   -- Port-settings grid geometry, shared by the chassis page and the page
   -- size helpers. One column = label + enable + legend + rlinkx + poe toggle
-  -- + poe bounce + group + speed.
-  -- The 68 px group cell lets the 30i / S30-I fit a 4th column (8 rows
-  -- instead of 10) inside their page width.
-  local GRID_COL_W   = 16 + 20 + 50 + 20 + 20 + 20 + 68 + 110
+  -- + poe bounce + group + speed. GRID_COL_W, with the narrowest legend,
+  -- sets the column count; the legend then takes the width left over.
+  local GRID_LEGEND_MIN_W = 50
+  local GRID_LEGEND_MAX_W = 96  -- 16 characters (the API maxLength) in Roboto 10
+  local GRID_COL_W   = 16 + 20 + GRID_LEGEND_MIN_W + 20 + 20 + 20 + 68 + 110
   local GRID_COL_PAD = 6
   local GRID_X_START = 12
   local GRID_ROW_H   = 22
@@ -3927,6 +3936,15 @@ function GetControlLayout(props)
     cols = math.max(1, math.min(cols, pc))
     local rows = math.ceil(pc / cols)
     return cols, rows
+  end
+  
+  -- Legend TextBox width: the page width the grid columns leave free on the
+  -- right, shared between the columns, up to GRID_LEGEND_MAX_W. Neither the
+  -- page size nor the column count changes.
+  local function gridLegendWidth(model)
+    local cols  = gridDimsForModel(model)
+    local spare = pageWidthForModel(model) - GRID_X_START * 2 - (cols * GRID_COL_W + (cols - 1) * GRID_COL_PAD)
+    return math.min(GRID_LEGEND_MAX_W, GRID_LEGEND_MIN_W + math.floor(spare / cols))
   end
   
   -- Groups and Trunks page geometry. Sections sit side by side (groups,
@@ -4470,14 +4488,14 @@ function GetControlLayout(props)
     local poeCount   = getPoeCount(model)
     local labelW     = 16
     local enableW    = 20
-    local legendW    = 50
+    local legendW    = gridLegendWidth(model)
     local rlinkxW    = 20
     local poeToggleW = 20
     local poeBounceW = 20
     local groupW     = 68
     local speedW     = 110
     local colPad     = GRID_COL_PAD
-    local colW       = GRID_COL_W
+    local colW       = GRID_COL_W + legendW - GRID_LEGEND_MIN_W
     local cellH      = 18
     local xStart     = GRID_X_START
     local cSpacing   = colW + colPad
@@ -4905,9 +4923,11 @@ function GetControlLayout(props)
       VTextAlign = "Center",
     }
   
-    layout["Auth.Password"] = {
-      Style      = "TextBox",
-      IsPassword = true,
+    -- Q-SYS has no masked text box for plugins: the password box draws its
+    -- text transparent, over Auth.Masked Password (alphabetically before it,
+    -- so drawn below), where the runtime writes the bullets.
+    layout["Auth.Masked Password"] = {
+      Style      = "Text",
       Position   = { inputX, rowY + rowGap * 2 },
       Size       = { boxW, boxH },
       Font       = "Roboto",
@@ -4915,6 +4935,22 @@ function GetControlLayout(props)
       HTextAlign = "Center",
       Color      = { 0, 0, 0, 0 },
       TextColor  = { 255, 255, 255 },
+      StrokeWidth = 0,
+      IsReadOnly = true,
+    }
+  
+    -- Designer's hover tooltip shows the value of a text box whose PrettyName
+    -- is empty: name it so the tooltip shows "Password", not the password.
+    layout["Auth.Password"] = {
+      Style      = "TextBox",
+      PrettyName = "Password",
+      Position   = { inputX, rowY + rowGap * 2 },
+      Size       = { boxW, boxH },
+      Font       = "Roboto",
+      FontSize   = 14,
+      HTextAlign = "Center",
+      Color      = { 0, 0, 0, 0 },
+      TextColor  = { 0, 0, 0, 0 },
     }
   
     layout["Auth.Status"] = {
@@ -5177,6 +5213,32 @@ if Controls then
     Controls["Auth.IP Address"].EventHandler = function(txt)
       state.baseIP = txt.String
       if txt.String ~= "" then connectToSwitch() end
+    end
+  end
+  
+  -- The password box's text is transparent; Auth.Masked Password, under it,
+  -- shows one bullet per character. Q-SYS reports the text only on Enter, so
+  -- the previous bullets stay while typing.
+  local function refreshMaskedPassword()
+    local mask = Controls["Auth.Masked Password"]
+    if mask == nil then return end
+    local pass = Controls["Auth.Password"] and Controls["Auth.Password"].String or ""
+    mask.String = string.rep("\u{2022}", utf8.len(pass) or #pass)
+  end
+  refreshMaskedPassword()
+  
+  -- Enter in the username or password box connects with the new credentials,
+  -- like Enter in the IP box.
+  if Controls["Auth.Username"] then
+    Controls["Auth.Username"].EventHandler = function()
+      connectToSwitch()
+    end
+  end
+  
+  if Controls["Auth.Password"] then
+    Controls["Auth.Password"].EventHandler = function()
+      refreshMaskedPassword()
+      connectToSwitch()
     end
   end
   

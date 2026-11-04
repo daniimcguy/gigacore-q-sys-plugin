@@ -10,10 +10,11 @@ state.selectedModel  = modelString  -- design time only; the runtime reads Prope
 
 -- Port-settings grid geometry, shared by the chassis page and the page
 -- size helpers. One column = label + enable + legend + rlinkx + poe toggle
--- + poe bounce + group + speed.
--- The 68 px group cell lets the 30i / S30-I fit a 4th column (8 rows
--- instead of 10) inside their page width.
-local GRID_COL_W   = 16 + 20 + 50 + 20 + 20 + 20 + 68 + 110
+-- + poe bounce + group + speed. GRID_COL_W, with the narrowest legend,
+-- sets the column count; the legend then takes the width left over.
+local GRID_LEGEND_MIN_W = 50
+local GRID_LEGEND_MAX_W = 96  -- 16 characters (the API maxLength) in Roboto 10
+local GRID_COL_W   = 16 + 20 + GRID_LEGEND_MIN_W + 20 + 20 + 20 + 68 + 110
 local GRID_COL_PAD = 6
 local GRID_X_START = 12
 local GRID_ROW_H   = 22
@@ -50,6 +51,15 @@ local function gridDimsForModel(model)
   cols = math.max(1, math.min(cols, pc))
   local rows = math.ceil(pc / cols)
   return cols, rows
+end
+
+-- Legend TextBox width: the page width the grid columns leave free on the
+-- right, shared between the columns, up to GRID_LEGEND_MAX_W. Neither the
+-- page size nor the column count changes.
+local function gridLegendWidth(model)
+  local cols  = gridDimsForModel(model)
+  local spare = pageWidthForModel(model) - GRID_X_START * 2 - (cols * GRID_COL_W + (cols - 1) * GRID_COL_PAD)
+  return math.min(GRID_LEGEND_MAX_W, GRID_LEGEND_MIN_W + math.floor(spare / cols))
 end
 
 -- Groups and Trunks page geometry. Sections sit side by side (groups,
@@ -593,14 +603,14 @@ local function buildChassisPage(layout, gfx, model, theme)
   local poeCount   = getPoeCount(model)
   local labelW     = 16
   local enableW    = 20
-  local legendW    = 50
+  local legendW    = gridLegendWidth(model)
   local rlinkxW    = 20
   local poeToggleW = 20
   local poeBounceW = 20
   local groupW     = 68
   local speedW     = 110
   local colPad     = GRID_COL_PAD
-  local colW       = GRID_COL_W
+  local colW       = GRID_COL_W + legendW - GRID_LEGEND_MIN_W
   local cellH      = 18
   local xStart     = GRID_X_START
   local cSpacing   = colW + colPad
@@ -1028,9 +1038,11 @@ local function buildConfigurationPage(layout, gfx, props)
     VTextAlign = "Center",
   }
 
-  layout["Auth.Password"] = {
-    Style      = "TextBox",
-    IsPassword = true,
+  -- Q-SYS has no masked text box for plugins: the password box draws its
+  -- text transparent, over Auth.Masked Password (alphabetically before it,
+  -- so drawn below), where the runtime writes the bullets.
+  layout["Auth.Masked Password"] = {
+    Style      = "Text",
     Position   = { inputX, rowY + rowGap * 2 },
     Size       = { boxW, boxH },
     Font       = "Roboto",
@@ -1038,6 +1050,22 @@ local function buildConfigurationPage(layout, gfx, props)
     HTextAlign = "Center",
     Color      = { 0, 0, 0, 0 },
     TextColor  = { 255, 255, 255 },
+    StrokeWidth = 0,
+    IsReadOnly = true,
+  }
+
+  -- Designer's hover tooltip shows the value of a text box whose PrettyName
+  -- is empty: name it so the tooltip shows "Password", not the password.
+  layout["Auth.Password"] = {
+    Style      = "TextBox",
+    PrettyName = "Password",
+    Position   = { inputX, rowY + rowGap * 2 },
+    Size       = { boxW, boxH },
+    Font       = "Roboto",
+    FontSize   = 14,
+    HTextAlign = "Center",
+    Color      = { 0, 0, 0, 0 },
+    TextColor  = { 0, 0, 0, 0 },
   }
 
   layout["Auth.Status"] = {

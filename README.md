@@ -20,15 +20,15 @@ This is an open-source Q-SYS plugin for controlling and monitoring
 
 The **latest stable version** of the plugin is always available on the **Releases** page.
 
-👉 **Download the latest release:**
-https://github.com/daniimcguy/gigacore-q-sys-plugin/releases/latest
+**Download the latest release:**
+https://github.com/luminex-lce/gigacore-q-sys-plugin/releases/latest
 
 ### How to update
 1. Download the `.qplug` file attached to the **latest release**
 2. Import the plugin into Q-SYS Designer
 3. Replace the existing plugin if prompted
 
-The version number is indicated by the **release tag** (e.g. `v0.1.1`).
+The version number is indicated by the **release tag** (e.g. `v2.0.0`).
 
 ---
 

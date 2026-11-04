@@ -31,6 +31,32 @@ if Controls["Auth.IP Address"] then
   end
 end
 
+-- The password box's text is transparent; Auth.Masked Password, under it,
+-- shows one bullet per character. Q-SYS reports the text only on Enter, so
+-- the previous bullets stay while typing.
+local function refreshMaskedPassword()
+  local mask = Controls["Auth.Masked Password"]
+  if mask == nil then return end
+  local pass = Controls["Auth.Password"] and Controls["Auth.Password"].String or ""
+  mask.String = string.rep("\u{2022}", utf8.len(pass) or #pass)
+end
+refreshMaskedPassword()
+
+-- Enter in the username or password box connects with the new credentials,
+-- like Enter in the IP box.
+if Controls["Auth.Username"] then
+  Controls["Auth.Username"].EventHandler = function()
+    connectToSwitch()
+  end
+end
+
+if Controls["Auth.Password"] then
+  Controls["Auth.Password"].EventHandler = function()
+    refreshMaskedPassword()
+    connectToSwitch()
+  end
+end
+
 if Controls["Auth.Connect"] then
   Controls["Auth.Connect"].EventHandler = function(btn)
     if btn.Boolean then

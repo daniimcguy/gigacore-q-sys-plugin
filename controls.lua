@@ -352,10 +352,18 @@ c[#c+1] = {
 c[#c+1] = {
   Name        = "Auth.Password",
   ControlType = "Text",
-  TextBoxType = "Password",
   PinStyle    = "None",
   UserPin     = false,
   Value       = "",
+}
+
+-- Bullets shown under the password box (its own text is transparent).
+c[#c+1] = {
+  Name        = "Auth.Masked Password",
+  ControlType = "Indicator",
+  IndicatorType = "Text",
+  PinStyle    = "None",
+  UserPin     = false,
 }
 
 c[#c+1] = {
