@@ -162,18 +162,41 @@ end
 for p = 1, pc do
   local legendCtrl = Controls["Ports.Port " .. p .. ".Legend"]
   if legendCtrl then
-    legendCtrl.EventHandler = function(ctrl)
-      local newVal = ctrl.String
-      HttpClient.Upload {
-        Url     = string.format("http://%s/api/ports/port/%d/legend", state.baseIP, p),
-        Method  = "PUT",
-        Data    = jsonString(newVal),
-        Headers = MergeTables(
-          { ["Content-Type"] = "application/json" },
-          getAuthHeaders()
-        ),
-        EventHandler = function(_tbl, _status, _body, _err) end,
-      }
+    legendCtrl.EventHandler = function(ctrl) putPortLegend(p, ctrl.String) end
+  end
+end
+
+-- Neighbor panel (main page): a chassis card opens it for its port (the
+-- open port's card closes it), Close closes it, -> Legend writes the
+-- port's proposed legend.
+for p = 1, pc do
+  local card = Controls["Port.Card " .. p]
+  if card then
+    card.EventHandler = function(c)
+      if c.Boolean then toggleLldpPanel(p) end
+    end
+  end
+end
+
+-- The panel body catches clicks (nothing to do): the grid under it stays out
+-- of reach while it is open.
+local panelBody = Controls["zLldp.Panel"]
+if panelBody then panelBody.EventHandler = function() end end
+
+local panelClose = Controls["zLldp.Panel Close"]
+if panelClose then
+  panelClose.EventHandler = function(c)
+    if c.Boolean then closeLldpPanel() end
+  end
+end
+
+local panelLegend = Controls["zLldp.Panel To Legend"]
+if panelLegend then
+  panelLegend.EventHandler = function(c)
+    local port = state.lldpPanelPort
+    local neighbor = port and state.lldp[port]
+    if c.Boolean and state.connection == "online" and neighbor then
+      putPortLegend(port, lldpView(neighbor).legend)
     end
   end
 end
@@ -288,6 +311,7 @@ end
 --------------------------------------------------------------------------------
 closeGroupPicker()
 closeSpeedPicker()
+closeLldpPanel()
 
 for p = 1, pc do
   local cell = Controls["Port.Group " .. p]

@@ -8,102 +8,6 @@ local portCount      = getPortCount(modelString)
 state.portCount      = portCount
 state.selectedModel  = modelString  -- design time only; the runtime reads Properties["Model"]
 
--- Port-settings grid geometry, shared by the chassis page and the page
--- size helpers. One column = label + enable + legend + rlinkx + poe toggle
--- + poe bounce + group + speed. GRID_COL_W, with the narrowest legend,
--- sets the column count; the legend then takes the width left over.
-local GRID_LEGEND_MIN_W = 50
-local GRID_LEGEND_MAX_W = 96  -- 16 characters (the API maxLength) in Roboto 10
-local GRID_COL_W   = 16 + 20 + GRID_LEGEND_MIN_W + 20 + 20 + 20 + 68 + 110
-local GRID_COL_PAD = 6
-local GRID_X_START = 12
-local GRID_ROW_H   = 22
-
--- Plugin width per model so that every chassis has the same right-side
--- margin (380px from chassis right edge to plugin right edge). Reserves
--- consistent space for future info controls regardless of chassis width.
--- Chassis strip geometry shared by the page builders: [display block]
--- [web UI chassis box] [status block], all CHASSIS_H tall, starting at
--- CHASSIS_X / _Y.
-local CHASSIS_X  = 20
-local CHASSIS_Y  = 4
-local CHASSIS_H  = 142   -- web UI chassis box (chassisGeometry h)
-local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
-local DISPLAY_GAP = 8    -- display block to chassis box
-local STATUS_GAP  = 8    -- chassis box to status block
-local STATUS_W    = 210  -- status block (RSTP lines, querier panel, PSU column)
-
--- The status block keeps a CHASSIS_X margin to the page's right edge, like
--- the display block's on the left.
-local function pageWidthForModel(model)
-  local rightMargin = STATUS_GAP + STATUS_W + CHASSIS_X
-  return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisGeometry(model).w + rightMargin
-end
-
--- Grid columns: as many as the page width fits with the GRID_X_START margin
--- kept on the right too; rows: ceil(ports / cols). Ports fill column by
--- column (1..rows down the first column, then the next), so the page stays
--- as short as the width allows.
-local function gridDimsForModel(model)
-  local pageW = pageWidthForModel(model)
-  local cols  = math.floor((pageW - GRID_X_START * 2 + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
-  local pc    = getPortCount(model) or 30
-  cols = math.max(1, math.min(cols, pc))
-  local rows = math.ceil(pc / cols)
-  return cols, rows
-end
-
--- Legend TextBox width: the page width the grid columns leave free on the
--- right, shared between the columns, up to GRID_LEGEND_MAX_W. Neither the
--- page size nor the column count changes.
-local function gridLegendWidth(model)
-  local cols  = gridDimsForModel(model)
-  local spare = pageWidthForModel(model) - GRID_X_START * 2 - (cols * GRID_COL_W + (cols - 1) * GRID_COL_PAD)
-  return math.min(GRID_LEGEND_MAX_W, GRID_LEGEND_MIN_W + math.floor(spare / cols))
-end
-
--- Groups and Trunks page geometry. Sections sit side by side (groups,
--- custom groups, trunks, custom trunks); each is a vertical list that
--- spills into extra sub-columns. Rows per section = the smallest count that
--- keeps all four sections inside the page width.
-local GT_TOP_Y, GT_LABEL_H, GT_CARD_W, GT_CARD_H, GT_GAP_Y, GT_SECTION_GAP, GT_MARGIN_X = 55, 16, 90, 18, 3, 14, 16
-local GT_SECTION_ITEMS = { 20, CUSTOM_GROUP_SLOTS, 1, CUSTOM_TRUNK_SLOTS }
-
-local function groupsPageWidthForRows(rows)
-  local w = GT_MARGIN_X
-  for i, n in ipairs(GT_SECTION_ITEMS) do
-    local subCols = math.max(1, math.ceil(n / rows))
-    w = w + subCols * GT_CARD_W + (subCols - 1) * 4
-    if i < #GT_SECTION_ITEMS then w = w + GT_SECTION_GAP end
-  end
-  return w + GT_MARGIN_X
-end
-
-local function groupsRowsForModel(model)
-  local pageW = pageWidthForModel(model)
-  for rows = 4, 20 do
-    if groupsPageWidthForRows(rows) <= pageW then return rows end
-  end
-  return 20
-end
-
-local function groupsPageHeightForModel(model)
-  local rows = groupsRowsForModel(model)
-  return GT_TOP_Y + GT_LABEL_H + 6 + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + 10
-end
-
-local function chassisPageHeightForModel(model)
-  local topGap = 6
-  local _cols, rows = gridDimsForModel(model)
-  return CHASSIS_Y + CHASSIS_H + topGap + (rows * GRID_ROW_H) + topGap
-end
-
--- One height for every page of a model so tab switches don't resize the
--- plugin: the taller of the chassis page and the groups page.
-local function pageHeightForModel(model)
-  return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
-end
-
 -- Two-row device header (Araneo-style), three columns left-aligned:
 --   Col 1: [Status]      / [Firmware]      — narrow, left edge
 --   Col 2: [Switch Name] / [Description]   — middle
@@ -307,6 +211,13 @@ local function iconButton(layout, name, x, y, w, h)
     StrokeWidth       = 0,
     Legend            = "",
   }
+end
+
+-- The same, clickable (Momentary, not read-only): Port.Card N, zLldp.Panel.
+local function clickableIconButton(layout, name, x, y, w, h)
+  iconButton(layout, name, x, y, w, h)
+  layout[name].ButtonStyle = "Momentary"
+  layout[name].IsReadOnly  = nil
 end
 
 local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
@@ -585,7 +496,8 @@ local function buildChassisPage(layout, gfx, model, theme)
   for port, card in pairs(geometry.cards) do
     local y = chassisY + card.y
     if cardBarOnTop(card) then y = y - CARD_BAR_SPACE end
-    iconButton(layout, "Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
+    -- Clickable: opens the LLDP neighbor panel.
+    clickableIconButton(layout, "Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
   end
   local frameIndex = 0
   for _, frame in ipairs(geometry.frames) do
@@ -912,11 +824,33 @@ local function buildSpeedPickerPanel(layout, model, theme)
   end
 end
 
+--------------------------------------------------------------------------------
+-- LLDP neighbor panel (main page): centred under the chassis box, over the
+-- port-settings grid; zLldp.Panel carries the panel SVG (lldpPanelSvg), its
+-- two buttons sit in the title row's right part. Blank and hidden until the
+-- runtime opens it (openLldpPanel in info.lua).
+--------------------------------------------------------------------------------
+local LLDP_PANEL_BUTTON_W, LLDP_PANEL_BUTTON_H, LLDP_PANEL_PAD = 70, 20, 8
+
+local function buildLldpPanel(layout, model)
+  local chassisX = CHASSIS_X + DISPLAY_W + DISPLAY_GAP
+  local x = chassisX + math.floor((chassisGeometry(model).w - LLDP_PANEL_W) / 2)
+  local y = CHASSIS_Y + CHASSIS_H + 6
+  -- Clickable, so a click on the panel never reaches the grid underneath.
+  clickableIconButton(layout, "zLldp.Panel", x, y, LLDP_PANEL_W, LLDP_PANEL_H)
+  local closeX = x + LLDP_PANEL_W - LLDP_PANEL_PAD - LLDP_PANEL_BUTTON_W
+  local buttonY = y + LLDP_PANEL_PAD
+  pickerButton(layout, "zLldp.Panel Close", closeX, buttonY, LLDP_PANEL_BUTTON_W, LLDP_PANEL_BUTTON_H)
+  pickerButton(layout, "zLldp.Panel To Legend", closeX - 6 - LLDP_PANEL_BUTTON_W, buttonY, LLDP_PANEL_BUTTON_W,
+    LLDP_PANEL_BUTTON_H)
+end
+
 local function buildControlsPage(layout, gfx, model)
   local theme = getThemeColors()
   buildChassisPage(layout, gfx, model, theme)
   buildGroupPickerPanel(layout, model, theme)
   buildSpeedPickerPanel(layout, model, theme)
+  buildLldpPanel(layout, model)
 end
 
 --------------------------------------------------------------------------------
@@ -1200,6 +1134,58 @@ local function buildGroupTrunkSettingsPage(layout, gfx, props)
     end)
 end
 
+--------------------------------------------------------------------------------
+-- Neighbors page (LLDP): the device header of Groups and Trunks, the column
+-- headers of each block, then per port Lldp.Row N (every cell in one IconData
+-- SVG, lldpRowSvg). The runtime fills the rows (refreshLldpRows in info.lua);
+-- blank offline.
+--------------------------------------------------------------------------------
+local function buildNeighborsPage(layout, gfx, props)
+  local theme = getThemeColors()
+  local model = resolveModel(props)
+  local pageW, pageH = pageWidthForModel(model), pageHeightForModel(model)
+
+  gfx[#gfx+1] = {
+    Type        = "Groupbox",
+    Fill        = theme.groupboxFill,
+    StrokeColor = GROUPBOX_STROKE_COLOR,
+    StrokeWidth = GROUPBOX_STROKE_WIDTH,
+    Position    = GROUPBOX_POSITION,
+    Size        = { pageW, pageH },
+  }
+  defineCommonDeviceInfo(layout, gfx, theme, 0, 0)
+
+  local geometry = neighborsGeometry(model)
+  local columns  = neighborsColumns(geometry.blockW, geometry.compact)
+
+  local headers = { { "name", "Neighbor" }, { "device", "Description" }, { "remotePort", "Port" }, { "ip", "IP" } }
+  local headerH = 14
+  for block = 0, geometry.blocks - 1 do
+    local blockX = LLDP_MARGIN_X + block * (geometry.blockW + LLDP_BLOCK_GAP)
+    for _, header in ipairs(headers) do
+      local column = columns[header[1]]
+      if column then
+        gfx[#gfx+1] = {
+          Type       = "Text",
+          Text       = header[2],
+          Position   = { blockX + column.x, geometry.rowsY - headerH },
+          Size       = { column.w, headerH },
+          Font       = "Roboto",
+          FontSize   = 10,
+          Color      = theme.textMuted,
+          HTextAlign = "Left",
+          VTextAlign = "Center",
+        }
+      end
+    end
+  end
+
+  for port = 1, getPortCount(model) do
+    local x, y = neighborsRowPosition(model, port)
+    iconButton(layout, "Lldp.Row " .. port, x, y, geometry.blockW, geometry.rowH)
+  end
+end
+
 -- Q-SYS lists a pin in Control Pins only when its control has a layout
 -- entry. Every pin the main page does not place gets a Style "None" entry
 -- (hidden, pin kept); the PrettyName pass below files it in its folder.
@@ -1217,6 +1203,7 @@ end
 local pageBuilders = {
   ["Configuration"] = buildConfigurationPage,
   ["Groups and Trunks"] = buildGroupTrunkSettingsPage,
+  ["Neighbors"] = buildNeighborsPage,
 }
 
 setmetatable(pageBuilders, {

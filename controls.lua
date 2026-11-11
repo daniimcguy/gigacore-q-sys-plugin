@@ -44,15 +44,15 @@ for p = 1, portCount do
   integerPin(port .. "Counters.Tx Bit Rate", 0, 100000000000)
   integerPin(port .. "Counters.Link Flaps", 0, 4294967295)
 
-  -- Web UI port card on the chassis: a flat read-only Button whose Legend
-  -- carries the whole card as an IconData SVG (portCardSvg).
+  -- Web UI port card on the chassis: a flat Button whose Legend carries the
+  -- whole card as an IconData SVG (portCardSvg); a click opens the LLDP
+  -- neighbor panel.
   c[#c+1] = {
     Name        = "Port.Card " .. p,
     ControlType = "Button",
-    ButtonType  = "Toggle",
+    ButtonType  = "Momentary",
     PinStyle    = "None",
     UserPin     = false,
-    IsReadOnly  = true,
   }
 
   -- Grid controls that are pins too: the live value out, a write PUTs it.
@@ -435,6 +435,39 @@ c[#c+1] = {
   UserPin     = false,
   IsReadOnly  = true,
 }
+
+-- LLDP neighbor panel (main page), opened from a chassis card: the panel SVG
+-- (clickable, so a click on it never reaches the grid underneath) and its two
+-- buttons, named to sort (and draw) above it.
+c[#c+1] = {
+  Name        = "zLldp.Panel",
+  ControlType = "Button",
+  ButtonType  = "Momentary",
+  PinStyle    = "None",
+  UserPin     = false,
+}
+for _, name in ipairs({ "zLldp.Panel To Legend", "zLldp.Panel Close" }) do
+  c[#c+1] = {
+    Name        = name,
+    ControlType = "Button",
+    ButtonType  = "Momentary",
+    PinStyle    = "None",
+    UserPin     = false,
+  }
+end
+
+-- Neighbors page (LLDP): per port a row (one IconData SVG drawing every cell,
+-- lldpRowSvg).
+for p = 1, portCount do
+  c[#c+1] = {
+    Name        = "Lldp.Row " .. p,
+    ControlType = "Button",
+    ButtonType  = "Toggle",
+    PinStyle    = "None",
+    UserPin     = false,
+    IsReadOnly  = true,
+  }
+end
 
 -- 10G frame per tenG group (IconData Button, like Port.Card), shown while the
 -- 10g licence is active. Declared for the model with the most tenG groups.

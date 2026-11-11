@@ -269,6 +269,7 @@ function getPortState(port)
     mr             = false,  -- IGMP snooping router port
     rstpRole       = nil,    -- RSTP role ("root", "designated", ...)
     multilinkx     = nil,    -- "active" | "member" | nil (MultiLinkX LAG)
+    legend         = nil,    -- legend as the switch reports it, nil until read
     speed          = nil,
     lastValidSpeed = nil,
     speedPending   = false,
@@ -429,6 +430,12 @@ function putPortMemberOf(port)
   putPortObject(port, "member_of", body, function()
     SetPortMemberOf(port, memberOfKey(kind, id))
   end)
+end
+
+-- PUT /api/ports/port/N/legend: the legend pin, "-> Legend" and Fill. A 200
+-- updates the port state (the WS notification may lag).
+function putPortLegend(port, text)
+  putPortObject(port, "legend", jsonString(text), function() SetPortLegend(port, text) end)
 end
 
 --------------------------------------------------------------------------------
@@ -674,6 +681,9 @@ end
 -- previous session as current) and when the WebSocket drops (the web UI's
 -- not-live look). The next snapshot rewrites them all.
 function clearPortCards()
+  -- First: closing re-renders the selected card, which the blanking below
+  -- then clears.
+  closeLldpPanel()
   state.cardSvg = {}
   state.tenGShown = nil
   for port = 1, (state.portCount or 0) do
@@ -683,6 +693,7 @@ function clearPortCards()
   -- or the 3 s reconcile) would otherwise redraw them while offline.
   state.querierSvg, state.querierByVid = "", {}
   Controls["Querier.Badges"].Legend = ""
+  clearLldp()
   if not state.chassis then return end
   local index = 0
   for _, frame in ipairs(state.chassis.frames) do
@@ -780,6 +791,9 @@ function subscribeAllSystem()
 
   -- MultiLinkX LAGs: any notification re-reads the whole list (scheduleLagSync)
   state.ws:Write('{"subscription":{"path":"/ports/lags/lag","action":"add","method":"changes"}}')
+
+  -- LLDP neighbors: the answer carries the whole list (handleLldpPath)
+  state.ws:Write('{"subscription":{"path":"/lldp/neighbor","action":"add","method":"changes"}}')
 end
 
 -- The switch answers a subscription under a group or PoE port that does not
@@ -1001,8 +1015,8 @@ local function applyPortObject(elem)
   local link = top:match('"link_state"%s*:%s*"([^"]*)"')
   if link then SetPortLinkState(port, link) end
 
-  local legend = top:match('"legend"%s*:%s*"([^"]*)"')
-  if legend then setPinString("Ports.Port " .. port .. ".Legend", legend) end
+  local legend = lldpJsonString(top, "legend")
+  if legend then SetPortLegend(port, legend) end
 
   if nested.counters then
     local p = getPortState(port)
@@ -1179,6 +1193,169 @@ function scheduleLagSync()
   end, 0.5)
 end
 
+--------------------------------------------------------------------------------
+-- LLDP neighbors: GET /api/lldp/neighbor in the reconcile, WS /lldp/neighbor
+-- (parsing and shown values in lldp.lua).
+--------------------------------------------------------------------------------
+state.lldp = state.lldp or {}  -- port -> neighbor (lldpParseNeighbors), ports 1..portCount only
+
+function refreshLldpViews()
+  refreshLldpRows()
+  refreshLldpPanel()
+end
+
+-- The whole neighbor list (GET body or subscription answer). A port the
+-- model does not have (O26-I lists 32, LAG ports 66 and up) is left out.
+function applyLldp(text)
+  local lldp = {}
+  for port, neighbor in pairs(lldpParseNeighbors(text)) do
+    if port <= (state.portCount or 0) then lldp[port] = neighbor end
+  end
+  state.lldp = lldp
+  refreshLldpViews()
+end
+
+-- Neighbors page. Rows are redrawn only when their SVG changed (state.lldpSvg).
+state.lldpSvg = state.lldpSvg or {}  -- port -> last row SVG written to Lldp.Row N
+
+local function lldpColors()
+  local theme = getThemeColors()
+  return { fill = rgbHex(theme.cardFill), border = "#CED3DD", text = rgbHex(theme.textPrimary),
+    muted = rgbHex(theme.textMuted) }
+end
+
+-- Fill of the LLDP text buttons (white text): navy in both themes (the light
+-- buttonOffColor is too pale for white text).
+local function lldpButtonHex()
+  local theme = getThemeColors()
+  return rgbHex(state.darkMode and theme.buttonOffColor or theme.textPrimary)
+end
+
+-- A text button (-> Legend, Close), shown.
+local function showLldpButton(name, label)
+  local button = Controls[name]
+  local hex = lldpButtonHex()
+  button.Legend = label
+  button.Color = hex
+  pcall(function() button.OffColor = hex end)
+  setOverlayVisible(name, true)
+end
+
+function refreshLldpRows()
+  local model = resolveModel(Properties)
+  local geometry = neighborsGeometry(model)
+  local columns = neighborsColumns(geometry.blockW, geometry.compact)
+  local colors = lldpColors()
+  for port = 1, state.portCount do
+    local neighbor = state.lldp[port]
+    local svg = lldpRowSvg({ port = port, w = geometry.blockW, h = geometry.rowH,
+      view = neighbor and lldpView(neighbor) }, colors, columns)
+    if state.lldpSvg[port] ~= svg then
+      state.lldpSvg[port] = svg
+      Controls["Lldp.Row " .. port].Legend = iconLegend(svg)
+    end
+  end
+end
+
+-- Blank the Neighbors page (WS Error / Closed, runtime start) and forget the
+-- neighbors, like the cards: Designer keeps the last runtime Legend offline.
+function clearLldp()
+  state.lldp, state.lldpSvg = {}, {}
+  for port = 1, (state.portCount or 0) do
+    local row = Controls["Lldp.Row " .. port]
+    if row then row.Legend = "" end
+  end
+end
+
+-- Neighbor panel (main page): opened by a click on a chassis card, over the
+-- port-settings grid. The selected card is outlined (portCardView.selected).
+-- The buttons' names sort after zLldp.Panel, so they draw on top of it.
+local LLDP_PANEL_CONTROLS = { "zLldp.Panel", "zLldp.Panel To Legend", "zLldp.Panel Close" }
+
+function refreshLldpPanel()
+  local port = state.lldpPanelPort
+  if not port then return end
+  local neighbor = state.lldp[port]
+  local view = neighbor and lldpView(neighbor)
+  local svg = lldpPanelSvg({ port = port, view = view }, lldpColors())
+  if svg == state.lldpPanelSvg then return end
+  state.lldpPanelSvg = svg
+  Controls["zLldp.Panel"].Legend = iconLegend(svg)
+  setOverlayVisible("zLldp.Panel", true)
+  showLldpButton("zLldp.Panel Close", "Close")
+  if view then
+    showLldpButton("zLldp.Panel To Legend", "\u{2192} Legend")
+  else
+    setOverlayVisible("zLldp.Panel To Legend", false)
+  end
+end
+
+-- Only while online; an open picker closes. The previous and the new
+-- selected cards re-render (the card SVG cache skips the others).
+function openLldpPanel(port)
+  if state.connection ~= "online" then return end
+  closeGroupPicker()
+  closeSpeedPicker()
+  local previous = state.lldpPanelPort
+  state.lldpPanelPort, state.lldpPanelSvg = port, nil
+  if previous and previous ~= port then renderPortUI(previous) end
+  renderPortUI(port)
+  refreshLldpPanel()
+end
+
+function closeLldpPanel()
+  local port = state.lldpPanelPort
+  state.lldpPanelPort, state.lldpPanelSvg = nil, nil
+  if port then renderPortUI(port) end
+  for _, name in ipairs(LLDP_PANEL_CONTROLS) do setOverlayVisible(name, false) end
+end
+
+-- A click on the open port's card closes the panel, any other card opens it.
+function toggleLldpPanel(port)
+  if state.lldpPanelPort == port then
+    closeLldpPanel()
+  else
+    openLldpPanel(port)
+  end
+end
+
+function syncLldp()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/lldp/neighbor", state.baseIP),
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    Timeout = 10,
+    EventHandler = counted(function(_tbl, code, body, err)
+      log("GET /api/lldp/neighbor => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      applyLldp(body)
+    end),
+  }
+end
+
+-- A burst of neighbor notifications re-reads the list once, 0.5 s after its
+-- first one.
+function scheduleLldpSync()
+  if state.lldpSyncPending then return end
+  state.lldpSyncPending = true
+  Timer.CallAfter(function()
+    state.lldpSyncPending = false
+    syncLldp()
+  end, 0.5)
+end
+
+-- /lldp/neighbor: the subscription answer carries the whole list; a TTL
+-- refresh (one every few seconds per neighbor) is ignored; anything else (the
+-- shape of an added or removed neighbor was never observed) re-reads the list.
+function handleLldpPath(path, raw)
+  if path ~= "/lldp/neighbor" then return false end
+  if raw:match('"notification_type"%s*:%s*"([^"]+)"') == "subscription_response" then
+    applyLldp(raw)
+  elseif not lldpIsTtlOnly(raw) then
+    scheduleLldpSync()
+  end
+  return true
+end
+
 function reconcileAll()
   log("reconcileAll: ws=" .. tostring(state.ws ~= nil) .. " ip=" .. tostring(state.baseIP))
   if not state.ws or state.baseIP == "" then return end
@@ -1190,6 +1367,7 @@ function reconcileAll()
   fetchCustomColors()
   syncPowerStatus()
   syncSpanningTree()
+  syncLldp()
 end
 
 -- The poll tick and the 3 s follow-up; the reconcile at Connected always runs.
@@ -1530,6 +1708,10 @@ function openWS(ip)
     state.lagRoleSubscribed, state.groupSubscribed, state.poeSubscribed = {}, {}, false
     refreshQuerierBadges()
     refreshMrPorts()
+    -- Same reason for the neighbors: Fill or -> Legend must never write a
+    -- previous switch's neighbor to this one (the subscription answer refills).
+    closeLldpPanel()
+    clearLldp()
     SetConnection("online")
     local ok, err = pcall(function()
       updateAuthStatus("Authenticated", "#00A000")
@@ -1815,8 +1997,9 @@ function handlePortPath(path, raw)
   end
 
   if path == ("/ports/port/" .. port .. "/legend") then
-    local v = extractString(raw)
-    if v then setPinString("Ports.Port " .. port .. ".Legend", v) end
+    -- Decoded (quotes, backslashes); an emptied legend ("") lands too.
+    local v = lldpJsonString(raw, "new_value")
+    if v then SetPortLegend(port, v) end
     return true
   end
 
@@ -1913,6 +2096,7 @@ function parseNotification(raw)
   if not path then return end
   if handleDevicePath(path, raw)       then return end
   if handleGroupPath(path, raw)        then return end
+  if handleLldpPath(path, raw)         then return end
   if path:find("^/ports/lags/lag")     then scheduleLagSync() return end
   if handlePortPath(path, raw)         then return end
   if handleSystemPath(path, raw)       then return end
@@ -1961,6 +2145,11 @@ end
 function SetPortRlinkxEnabled(port, enabled)
   getPortState(port).rlinkxEnabled = enabled
   renderPortUI(port)
+end
+
+function SetPortLegend(port, value)
+  getPortState(port).legend = value
+  setPinString("Ports.Port " .. port .. ".Legend", value)
 end
 
 -- Raw link_speed fields for the Link Speed pins; nil leaves a field as is.
@@ -2653,10 +2842,11 @@ local function pickerControlNames()
   return names
 end
 
--- Hiding also blanks the control: Designer keeps the last runtime Legend
--- and String when the design goes offline but resets IsInvisible, so any
--- leftover text would paint over the chassis through the transparent button.
-local function setPickerVisible(name, visible)
+-- Pickers, LLDP buttons. Hiding also blanks the control: Designer keeps the
+-- last runtime Legend and String when the design goes offline but resets
+-- IsInvisible, so any leftover text would paint over the page through the
+-- transparent button.
+function setOverlayVisible(name, visible)
   local ctrl = Controls[name]
   if not ctrl then return end
   pcall(function() ctrl.IsInvisible = not visible end)
@@ -2670,7 +2860,7 @@ end
 
 function closeGroupPicker()
   state.pickerPort = nil
-  for _, name in ipairs(pickerControlNames()) do setPickerVisible(name, false) end
+  for _, name in ipairs(pickerControlNames()) do setOverlayVisible(name, false) end
 end
 
 -- One picker button: Legend = name (check mark on the port's current
@@ -2681,7 +2871,7 @@ local function paintPickerItem(name, label, hex, isCurrent)
   ctrl.Legend = isCurrent and (label .. " ✓") or label
   ctrl.Color  = hex
   pcall(function() ctrl.OffColor = hex end)
-  setPickerVisible(name, true)
+  setOverlayVisible(name, true)
 end
 
 local function memberColorHex(key)
@@ -2691,6 +2881,7 @@ end
 
 function openGroupPicker(port)
   if state.baseIP == "" then return end
+  closeLldpPanel()
   state.pickerPort = port
   local current = getPortState(port).memberOf
   local theme   = getThemeColors()
@@ -2707,13 +2898,13 @@ function openGroupPicker(port)
   local title = Controls["zPicker.Title"]
   if title then
     title.String = string.format("Port %d: assign to a group or trunk", port)
-    setPickerVisible("zPicker.Title", true)
+    setOverlayVisible("zPicker.Title", true)
   end
   for i, text in ipairs(PICKER_SECTION_TITLES) do
     local lbl = Controls["zPicker.Label " .. i]
     if lbl then
       lbl.String = text
-      setPickerVisible("zPicker.Label " .. i, true)
+      setOverlayVisible("zPicker.Label " .. i, true)
     end
   end
   paintPickerItem("zPicker.None",   "None",   PICKER_UNASSIGNED_HEX, current == nil)
@@ -2725,7 +2916,7 @@ function openGroupPicker(port)
       local key = "Group: " .. id
       paintPickerItem(name, memberOfDisplayName(key), memberColorHex(key), current == key)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
   for slot = 1, 1 + CUSTOM_TRUNK_SLOTS do
@@ -2734,7 +2925,7 @@ function openGroupPicker(port)
       local key = "Trunk: " .. id
       paintPickerItem(name, memberOfDisplayName(key), memberColorHex(key), current == key)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
 end
@@ -2777,7 +2968,7 @@ end
 
 function closeSpeedPicker()
   state.speedPickerPort = nil
-  for _, name in ipairs(speedPickerControlNames()) do setPickerVisible(name, false) end
+  for _, name in ipairs(speedPickerControlNames()) do setOverlayVisible(name, false) end
 end
 
 -- Speeds offered for a port. Unknown type (no /api/ports snapshot yet)
@@ -2791,6 +2982,7 @@ end
 
 function openSpeedPicker(port)
   if state.baseIP == "" then return end
+  closeLldpPanel()
   state.speedPickerPort = port
   local pstate  = getPortState(port)
   local current = (pstate.enabled == false) and "Disabled" or pstate.speed
@@ -2802,7 +2994,7 @@ function openSpeedPicker(port)
   local title = Controls["zSpeed.Title"]
   if title then
     title.String = string.format("Port %d: link speed", port)
-    setPickerVisible("zSpeed.Title", true)
+    setOverlayVisible("zSpeed.Title", true)
   end
   paintPickerItem("zSpeed.Cancel", "Cancel", rgbHex(theme.buttonOffColor), false)
   for i, label in ipairs(SPEED_CHOICES) do
@@ -2812,7 +3004,7 @@ function openSpeedPicker(port)
       paintPickerItem(name, label,
         rgbHex(isCurrent and theme.accentCyan or theme.buttonOffColor), isCurrent)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
 end
@@ -3032,6 +3224,173 @@ function chassisGeometry(modelName)
   return geometry
 end
 
+-- Page sizes and grid geometry per model (layouts and runtime).
+-- page_geometry.lua
+-- Page sizes and grid geometry per model: the chassis strip, the port-settings
+-- grid and the Groups and Trunks sections. Top-level, so GetControlLayout and
+-- the runtime size things the same way.
+
+-- Port-settings grid geometry, shared by the chassis page and the page
+-- size helpers. One column = label + enable + legend + rlinkx + poe toggle
+-- + poe bounce + group + speed. GRID_COL_W, with the narrowest legend,
+-- sets the column count; the legend then takes the width left over.
+local GRID_LEGEND_MIN_W = 50
+local GRID_LEGEND_MAX_W = 96  -- 16 characters (the API maxLength) in Roboto 10
+local GRID_COL_W   = 16 + 20 + GRID_LEGEND_MIN_W + 20 + 20 + 20 + 68 + 110
+local GRID_COL_PAD = 6
+local GRID_X_START = 12
+local GRID_ROW_H   = 22
+
+-- Plugin width per model so that every chassis has the same right-side
+-- margin (380px from chassis right edge to plugin right edge). Reserves
+-- consistent space for future info controls regardless of chassis width.
+-- Chassis strip geometry shared by the page builders: [display block]
+-- [web UI chassis box] [status block], all CHASSIS_H tall, starting at
+-- CHASSIS_X / _Y.
+local CHASSIS_X  = 20
+local CHASSIS_Y  = 4
+local CHASSIS_H  = 142   -- web UI chassis box (chassisGeometry h)
+local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
+local DISPLAY_GAP = 8    -- display block to chassis box
+local STATUS_GAP  = 8    -- chassis box to status block
+local STATUS_W    = 210  -- status block (RSTP lines, querier panel, PSU column)
+
+-- The status block keeps a CHASSIS_X margin to the page's right edge, like
+-- the display block's on the left.
+function pageWidthForModel(model)
+  local rightMargin = STATUS_GAP + STATUS_W + CHASSIS_X
+  return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisGeometry(model).w + rightMargin
+end
+
+-- Grid columns: as many as the page width fits with the GRID_X_START margin
+-- kept on the right too; rows: ceil(ports / cols). Ports fill column by
+-- column (1..rows down the first column, then the next), so the page stays
+-- as short as the width allows.
+function gridDimsForModel(model)
+  local pageW = pageWidthForModel(model)
+  local cols  = math.floor((pageW - GRID_X_START * 2 + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
+  local pc    = getPortCount(model) or 30
+  cols = math.max(1, math.min(cols, pc))
+  local rows = math.ceil(pc / cols)
+  return cols, rows
+end
+
+-- Legend TextBox width: the page width the grid columns leave free on the
+-- right, shared between the columns, up to GRID_LEGEND_MAX_W. Neither the
+-- page size nor the column count changes.
+function gridLegendWidth(model)
+  local cols  = gridDimsForModel(model)
+  local spare = pageWidthForModel(model) - GRID_X_START * 2 - (cols * GRID_COL_W + (cols - 1) * GRID_COL_PAD)
+  return math.min(GRID_LEGEND_MAX_W, GRID_LEGEND_MIN_W + math.floor(spare / cols))
+end
+
+-- Groups and Trunks page geometry. Sections sit side by side (groups,
+-- custom groups, trunks, custom trunks); each is a vertical list that
+-- spills into extra sub-columns. Rows per section = the smallest count that
+-- keeps all four sections inside the page width.
+local GT_TOP_Y, GT_LABEL_H, GT_CARD_W, GT_CARD_H, GT_GAP_Y, GT_SECTION_GAP, GT_MARGIN_X = 55, 16, 90, 18, 3, 14, 16
+local GT_SECTION_ITEMS = { 20, CUSTOM_GROUP_SLOTS, 1, CUSTOM_TRUNK_SLOTS }
+
+function groupsPageWidthForRows(rows)
+  local w = GT_MARGIN_X
+  for i, n in ipairs(GT_SECTION_ITEMS) do
+    local subCols = math.max(1, math.ceil(n / rows))
+    w = w + subCols * GT_CARD_W + (subCols - 1) * 4
+    if i < #GT_SECTION_ITEMS then w = w + GT_SECTION_GAP end
+  end
+  return w + GT_MARGIN_X
+end
+
+function groupsRowsForModel(model)
+  local pageW = pageWidthForModel(model)
+  for rows = 4, 20 do
+    if groupsPageWidthForRows(rows) <= pageW then return rows end
+  end
+  return 20
+end
+
+function groupsPageHeightForModel(model)
+  local rows = groupsRowsForModel(model)
+  return GT_TOP_Y + GT_LABEL_H + 6 + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + 10
+end
+
+function chassisPageHeightForModel(model)
+  local topGap = 6
+  local _cols, rows = gridDimsForModel(model)
+  return CHASSIS_Y + CHASSIS_H + topGap + (rows * GRID_ROW_H) + topGap
+end
+
+-- Neighbors page (LLDP): the column header row at GT_TOP_Y, then one 18 px
+-- row per port, cut into blocks of rows side by side.
+local LLDP_ROW_H       = 18
+local LLDP_ROWS_Y      = GT_TOP_Y + 14   -- 69
+local LLDP_BOTTOM      = 8
+local LLDP_MARGIN_X    = 20
+local LLDP_BLOCK_GAP   = 20
+local LLDP_BLOCK_MIN_W = 400   -- narrowest block (compact: no Description column)
+local LLDP_FULL_W      = 500   -- a narrower block drops the Description column
+local LLDP_GAP         = 4
+
+-- Smallest block count (1..3) whose rows fit the height the chassis and
+-- groups pages already need; when none fits, the most blocks still at least
+-- LLDP_BLOCK_MIN_W wide (the page then grows).
+function neighborsGeometry(model)
+  local pageW = pageWidthForModel(model)
+  local available = math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
+  local ports = getPortCount(model) or 30
+  local chosen
+  for blocks = 1, 3 do
+    local blockW = math.floor((pageW - 2 * LLDP_MARGIN_X - LLDP_BLOCK_GAP * (blocks - 1)) / blocks)
+    if blockW >= LLDP_BLOCK_MIN_W then
+      chosen = { blocks = blocks, blockW = blockW, rows = math.ceil(ports / blocks) }
+      if LLDP_ROWS_Y + LLDP_ROW_H * chosen.rows + LLDP_BOTTOM <= available then break end
+    end
+  end
+  chosen.compact = chosen.blockW < LLDP_FULL_W
+  chosen.rowH    = LLDP_ROW_H
+  chosen.rowsY   = LLDP_ROWS_Y
+  chosen.height  = LLDP_ROWS_Y + LLDP_ROW_H * chosen.rows + LLDP_BOTTOM
+  return chosen
+end
+
+-- Row columns, x relative to the block: number, Neighbor, Description (full
+-- blocks only), Port, IP, 4 px apart. Neighbor and Description share the
+-- slack (45 / 55 %).
+function neighborsColumns(blockW, compact)
+  local order = compact and { "number", "name", "remotePort", "ip" }
+    or { "number", "name", "device", "remotePort", "ip" }
+  local widths = { number = 20, remotePort = 40, ip = 95 }
+  local slack = blockW - LLDP_GAP * (#order - 1)
+    - widths.number - widths.remotePort - widths.ip
+  if compact then
+    widths.name = slack
+  else
+    widths.name = math.floor(slack * 0.45)
+    widths.device = slack - widths.name
+  end
+  local columns, x = {}, 0
+  for _, key in ipairs(order) do
+    columns[key] = { x = x, w = widths[key] }
+    x = x + widths[key] + LLDP_GAP
+  end
+  return columns
+end
+
+-- Top-left of port N's row: ports run down a block, then on to the next one.
+function neighborsRowPosition(model, port)
+  local geometry = neighborsGeometry(model)
+  local block = math.floor((port - 1) / geometry.rows)
+  return LLDP_MARGIN_X + block * (geometry.blockW + LLDP_BLOCK_GAP),
+    geometry.rowsY + ((port - 1) % geometry.rows) * geometry.rowH
+end
+
+-- One height for every page of a model so tab switches don't resize the
+-- plugin: the tallest of the chassis, groups and neighbors pages.
+function pageHeightForModel(model)
+  return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model),
+    neighborsGeometry(model).height)
+end
+
 -- Web UI port cards drawn as SVG (runtime cards and the offline chassis).
 -- port_card.lua
 -- Web UI port cards drawn as SVG: one IconData SVG per port at runtime, and the
@@ -3213,6 +3572,9 @@ function portCardSvg(view)
     table.insert(parts, '<g>')
   end
   table.insert(parts, portCardBody(view))
+  if view.selected then  -- the port shown in the LLDP neighbor panel
+    table.insert(parts, rectElement(1, 1, w - 2, h - 2, 'rx="2" fill="none" stroke="#fff" stroke-width="2"'))
+  end
   table.insert(parts, '</g></svg>')
   return table.concat(parts)
 end
@@ -3274,6 +3636,7 @@ function portCardView(port, card)
     mlx = MULTILINKX_BAR[p.multilinkx],
     mr = p.mr == true,
     rstpRole = rstpRole,
+    selected = state.lldpPanelPort == port,
   }
 end
 
@@ -3366,6 +3729,288 @@ function chassisOfflineSvg(modelName)
       .. portCardBody(offlineCardView(card, port)) .. '</g>')
   end
   table.insert(parts, '</g></svg>')
+  return table.concat(parts)
+end
+
+-- LLDP neighbors: parsing, shown values, panel and Neighbors row SVGs.
+-- lldp.lua
+-- LLDP neighbors: parsing of /api/lldp/neighbor (GET body or WS notification),
+-- the values shown for a neighbor, and the SVGs of the neighbor panel (main
+-- page) and of a Neighbors page row. Pure functions; uses port_card.lua's
+-- svgNumber, rectElement, baseline and FONT (same chunk). Every SVG is ASCII:
+-- text goes through xmlText.
+
+local EM_DASH = "\u{2014}"
+local MIDDLE_DOT = "\u{B7}"
+local ELLIPSIS = "\u{2026}"
+
+local XML_ESCAPES = { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;" }
+
+local function xmlCodePoint(sequence)
+  if utf8.len(sequence) == 1 then return "&#" .. utf8.codepoint(sequence) .. ";" end
+  return "&#65533;"
+end
+
+-- Text for an SVG text node or attribute, ASCII only: & < > " escaped, every
+-- non-ASCII character as &#N; (an invalid byte as U+FFFD), control characters
+-- as spaces.
+function xmlText(s)
+  return (tostring(s):gsub("%c", " "):gsub('[&<>"]', XML_ESCAPES)
+    :gsub("[\xC2-\xF4][\x80-\xBF]*", xmlCodePoint):gsub("[\x80-\xFF]", "&#65533;"))
+end
+
+-- First n characters of a UTF-8 string.
+function utf8Cut(s, n)
+  local cut = utf8.offset(s, n + 1)
+  if cut then return s:sub(1, cut - 1) end
+  return s
+end
+
+local JSON_ESCAPES = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+
+-- Value of "key":"..." in a JSON object's text, decoded; nil when the key is
+-- absent or its value is not a string. Scans escape to escape, never per
+-- character.
+function lldpJsonString(object, key)
+  local _, valueStart = object:find('"' .. key .. '"%s*:%s*"')
+  if not valueStart then return nil end
+  local parts, pos = {}, valueStart + 1
+  while true do
+    local i = object:find('["\\]', pos)
+    if not i then return nil end
+    parts[#parts + 1] = object:sub(pos, i - 1)
+    if object:sub(i, i) == '"' then break end
+    local escape = object:sub(i + 1, i + 1)
+    if escape == "u" then
+      local code = tonumber(object:sub(i + 2, i + 5), 16) or 0xFFFD
+      pos = i + 6
+      if code >= 0xD800 and code <= 0xDBFF then
+        local low = object:match("^\\u(%x%x%x%x)", pos)
+        low = low and tonumber(low, 16)
+        if low and low >= 0xDC00 and low <= 0xDFFF then
+          code = 0x10000 + (code - 0xD800) * 0x400 + (low - 0xDC00)
+          pos = pos + 6
+        end
+      end
+      if code >= 0xD800 and code <= 0xDFFF then code = 0xFFFD end
+      parts[#parts + 1] = utf8.char(code)
+    else
+      parts[#parts + 1] = JSON_ESCAPES[escape] or escape
+      pos = i + 2
+    end
+  end
+  return table.concat(parts)
+end
+
+-- { [port] = neighbor } from a /api/lldp/neighbor array (GET body or WS
+-- notification). One chunk per "port_number", up to the next one, so braces
+-- inside a string never shift a field; text before the first is ignored. The
+-- first neighbor of a port is kept, extra counts the others.
+function lldpParseNeighbors(text)
+  local starts, pos = {}, 1
+  while true do
+    local s, e, port = text:find('"port_number"%s*:%s*(%d+)', pos)
+    if not s then break end
+    starts[#starts + 1] = { at = s, port = tonumber(port) }
+    pos = e + 1
+  end
+  local neighbors = {}
+  for i, entry in ipairs(starts) do
+    local nextEntry = starts[i + 1]
+    local chunk = text:sub(entry.at, nextEntry and (nextEntry.at - 1) or #text)
+    local known = neighbors[entry.port]
+    if known then
+      known.extra = known.extra + 1
+    else
+      neighbors[entry.port] = {
+        chassisId             = lldpJsonString(chunk, "chassis_id") or "",
+        chassisIdSubtype      = lldpJsonString(chunk, "chassis_id_subtype") or "",
+        sysName               = lldpJsonString(chunk, "sys_name") or "",
+        sysDescription        = lldpJsonString(chunk, "sys_description") or "",
+        remotePort            = lldpJsonString(chunk, "remote_port") or "",
+        remotePortSubtype     = lldpJsonString(chunk, "remote_port_id_subtype") or "",
+        remotePortDescription = lldpJsonString(chunk, "remote_port_description") or "",
+        mgmtAddress           = lldpJsonString(chunk, "mgmt_address") or "",
+        extra                 = 0,
+      }
+    end
+  end
+  return neighbors
+end
+
+-- Values shown for a neighbor (spec section 4).
+function lldpView(neighbor)
+  local description = neighbor.sysDescription
+  local cut = math.min(description:find(",", 1, true) or #description + 1,
+    description:find(" (", 1, true) or #description + 1)
+  local model = description:sub(1, cut - 1)
+  if cut > #description or model == "" then model = nil end
+  local firmware = description:match("%f[%w](v%d+%.%d+%.%d+)")
+
+  local device = EM_DASH
+  if model and firmware then
+    device = model .. " " .. MIDDLE_DOT .. " " .. firmware
+  elseif description ~= "" then
+    device = description
+  end
+
+  local name = EM_DASH
+  if neighbor.sysName ~= "" then
+    name = neighbor.sysName
+  elseif model and firmware then
+    name = model
+  elseif neighbor.chassisId ~= "" then
+    name = neighbor.chassisId
+  end
+
+  local remotePort
+  if neighbor.remotePortSubtype == "Local" then
+    remotePort = neighbor.remotePort:gsub("^%d+/", "")
+  elseif neighbor.remotePortSubtype == "MAC Address" then
+    remotePort = neighbor.remotePortDescription
+  else
+    remotePort = neighbor.remotePort
+  end
+  if remotePort == "" then remotePort = EM_DASH end
+
+  local remoteNote = neighbor.remotePortDescription
+  if remoteNote == "" or remoteNote == remotePort then remoteNote = nil end
+
+  local ip = neighbor.mgmtAddress
+  -- 16 characters (the API maxLength); a long name is shortened so the
+  -- " p<remote port>" suffix stays.
+  local suffix = remotePort:match("^%d+$") and (" p" .. remotePort) or ""
+  local legend = utf8Cut(name, 16 - #suffix):gsub("%s+$", "") .. suffix
+
+  return {
+    name = name, device = device, remotePort = remotePort, remoteNote = remoteNote,
+    ip = ip ~= "" and ip or EM_DASH, ipMuted = ip:lower():sub(1, 5) == "fe80:",
+    legend = legend,
+    chassisKey = neighbor.chassisIdSubtype == "MAC Address" and "MAC" or "Chassis",
+    chassisId = neighbor.chassisId, extra = neighbor.extra, sysName = neighbor.sysName,
+  }
+end
+
+-- True when a /lldp/neighbor notification only refreshes TTLs: its new_value
+-- array holds at least one "ttl" and no key other than port_number / ttl.
+function lldpIsTtlOnly(raw)
+  local _, open = raw:find('"new_value"%s*:%s*%[')
+  if not open then return false end
+  local close = raw:find("]", open + 1, true)
+  if not close then return false end
+  local sawTtl = false
+  for key in raw:sub(open + 1, close - 1):gmatch('"([^"]*)"%s*:') do
+    if key == "ttl" then
+      sawTtl = true
+    elseif key ~= "port_number" then
+      return false
+    end
+  end
+  return sawTtl
+end
+
+-- ~Average Roboto glyph width per px of font size.
+local GLYPH_W = 0.56
+local GLYPH_W_BOLD = 0.6
+
+-- text cut to the characters that fit width px, with an ellipsis when cut.
+local function lldpFit(text, width, glyphWidth)
+  local chars = math.floor(width / glyphWidth)
+  if (utf8.len(text) or #text) > chars then
+    return utf8Cut(text, chars - 1) .. ELLIPSIS
+  end
+  return text
+end
+
+-- Left-aligned text centred vertically on centreY; content already escaped.
+local function lldpText(x, centreY, size, fill, content, attributes)
+  return '<text x="' .. svgNumber(x) .. '" y="' .. svgNumber(baseline(centreY, size)) .. '" ' .. FONT
+    .. ' font-size="' .. size .. '"' .. (attributes or "") .. ' fill="' .. fill .. '">' .. content .. '</text>'
+end
+
+local function svgOpen(w, h)
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' .. svgNumber(w) .. '" height="' .. svgNumber(h)
+    .. '" viewBox="0 0 ' .. svgNumber(w) .. " " .. svgNumber(h) .. '">'
+end
+
+local function nameWithExtra(view)
+  if view.extra > 0 then return view.name .. " +" .. view.extra end
+  return view.name
+end
+
+-- Neighbor panel (main page): title row, then two key / value columns.
+LLDP_PANEL_W = 520
+LLDP_PANEL_H = 87
+local PANEL_BUTTONS_W = 160          -- right part of the title row: -> Legend, Close
+local PANEL_ROW_Y = { 40, 56, 72 }   -- row centres
+local PANEL_LEFT_KEY_X, PANEL_LEFT_VALUE_X = 8, 76
+local PANEL_RIGHT_KEY_X, PANEL_RIGHT_VALUE_X = 270, 320
+local PANEL_TITLE_SIZE, PANEL_KEY_SIZE, PANEL_VALUE_SIZE = 11, 10, 11
+
+-- panel = { port, view = lldpView | nil };
+-- colors = { fill, border, text, muted }.
+function lldpPanelSvg(panel, colors)
+  local w, h = LLDP_PANEL_W, LLDP_PANEL_H
+  local view = panel.view
+  local parts = { svgOpen(w, h),
+    rectElement(0.5, 0.5, w - 1, h - 1, 'rx="4" fill="' .. colors.fill .. '" stroke="' .. colors.border
+      .. '" stroke-width="1"') }
+  local title = "Port " .. panel.port .. " " .. EM_DASH .. " "
+    .. (view and nameWithExtra(view) or "no LLDP neighbor")
+  table.insert(parts, lldpText(PANEL_LEFT_KEY_X, 18, PANEL_TITLE_SIZE, colors.text,
+    xmlText(lldpFit(title, w - PANEL_LEFT_KEY_X - PANEL_BUTTONS_W, PANEL_TITLE_SIZE * GLYPH_W_BOLD)),
+    ' font-weight="bold"'))
+  if view then
+    local leftW = PANEL_RIGHT_KEY_X - PANEL_LEFT_VALUE_X - 8
+    local rightW = w - PANEL_RIGHT_VALUE_X - 8
+    local valueGlyph = PANEL_VALUE_SIZE * GLYPH_W
+    local function key(x, row, label)
+      table.insert(parts, lldpText(x, PANEL_ROW_Y[row], PANEL_KEY_SIZE, colors.muted, label))
+    end
+    local function value(x, row, text, width, fill)
+      table.insert(parts, lldpText(x, PANEL_ROW_Y[row], PANEL_VALUE_SIZE, fill or colors.text,
+        xmlText(lldpFit(text, width, valueGlyph))))
+    end
+    local remote = view.remotePort
+    if view.remoteNote then remote = remote .. '  "' .. view.remoteNote .. '"' end
+    key(PANEL_LEFT_KEY_X, 1, "Description")
+    value(PANEL_LEFT_VALUE_X, 1, view.device, leftW)
+    key(PANEL_LEFT_KEY_X, 2, "Port")
+    value(PANEL_LEFT_VALUE_X, 2, remote, leftW)
+    key(PANEL_LEFT_KEY_X, 3, "IP")
+    value(PANEL_LEFT_VALUE_X, 3, view.ip, leftW, view.ipMuted and colors.muted or nil)
+    key(PANEL_RIGHT_KEY_X, 1, view.chassisKey)
+    value(PANEL_RIGHT_VALUE_X, 1, view.chassisId ~= "" and view.chassisId or EM_DASH, rightW)
+  end
+  table.insert(parts, "</svg>")
+  return table.concat(parts)
+end
+
+local ROW_SIZE = 10
+
+-- One Neighbors page row: row = { port, w, h, view = lldpView | nil };
+-- columns = { number, name, device | nil, remotePort, ip }, each { x, w }
+-- relative to the row.
+function lldpRowSvg(row, colors, columns)
+  local view = row.view
+  local centre = row.h / 2
+  local glyph = ROW_SIZE * GLYPH_W
+  local parts = { svgOpen(row.w, row.h) }
+  local number = columns.number
+  table.insert(parts, lldpText(number.x + number.w, centre, ROW_SIZE, view and colors.text or colors.muted,
+    tostring(row.port), ' font-weight="bold" text-anchor="end"'))
+  local function cell(column, text, fill)
+    table.insert(parts, lldpText(column.x, centre, ROW_SIZE, fill, xmlText(lldpFit(text, column.w, glyph))))
+  end
+  if not view then
+    cell(columns.name, EM_DASH, colors.muted)
+  else
+    cell(columns.name, nameWithExtra(view), colors.text)
+    if columns.device then cell(columns.device, view.device, colors.text) end
+    cell(columns.remotePort, view.remotePort, colors.text)
+    cell(columns.ip, view.ip, view.ipMuted and colors.muted or colors.text)
+  end
+  table.insert(parts, "</svg>")
   return table.concat(parts)
 end
 
@@ -3466,15 +4111,15 @@ function GetControls(props)
     integerPin(port .. "Counters.Tx Bit Rate", 0, 100000000000)
     integerPin(port .. "Counters.Link Flaps", 0, 4294967295)
   
-    -- Web UI port card on the chassis: a flat read-only Button whose Legend
-    -- carries the whole card as an IconData SVG (portCardSvg).
+    -- Web UI port card on the chassis: a flat Button whose Legend carries the
+    -- whole card as an IconData SVG (portCardSvg); a click opens the LLDP
+    -- neighbor panel.
     c[#c+1] = {
       Name        = "Port.Card " .. p,
       ControlType = "Button",
-      ButtonType  = "Toggle",
+      ButtonType  = "Momentary",
       PinStyle    = "None",
       UserPin     = false,
-      IsReadOnly  = true,
     }
   
     -- Grid controls that are pins too: the live value out, a write PUTs it.
@@ -3858,6 +4503,39 @@ function GetControls(props)
     IsReadOnly  = true,
   }
   
+  -- LLDP neighbor panel (main page), opened from a chassis card: the panel SVG
+  -- (clickable, so a click on it never reaches the grid underneath) and its two
+  -- buttons, named to sort (and draw) above it.
+  c[#c+1] = {
+    Name        = "zLldp.Panel",
+    ControlType = "Button",
+    ButtonType  = "Momentary",
+    PinStyle    = "None",
+    UserPin     = false,
+  }
+  for _, name in ipairs({ "zLldp.Panel To Legend", "zLldp.Panel Close" }) do
+    c[#c+1] = {
+      Name        = name,
+      ControlType = "Button",
+      ButtonType  = "Momentary",
+      PinStyle    = "None",
+      UserPin     = false,
+    }
+  end
+  
+  -- Neighbors page (LLDP): per port a row (one IconData SVG drawing every cell,
+  -- lldpRowSvg).
+  for p = 1, portCount do
+    c[#c+1] = {
+      Name        = "Lldp.Row " .. p,
+      ControlType = "Button",
+      ButtonType  = "Toggle",
+      PinStyle    = "None",
+      UserPin     = false,
+      IsReadOnly  = true,
+    }
+  end
+  
   -- 10G frame per tenG group (IconData Button, like Port.Card), shown while the
   -- 10g licence is active. Declared for the model with the most tenG groups.
   local tenGFrameCount = 0
@@ -3892,102 +4570,6 @@ function GetControlLayout(props)
   local portCount      = getPortCount(modelString)
   state.portCount      = portCount
   state.selectedModel  = modelString  -- design time only; the runtime reads Properties["Model"]
-  
-  -- Port-settings grid geometry, shared by the chassis page and the page
-  -- size helpers. One column = label + enable + legend + rlinkx + poe toggle
-  -- + poe bounce + group + speed. GRID_COL_W, with the narrowest legend,
-  -- sets the column count; the legend then takes the width left over.
-  local GRID_LEGEND_MIN_W = 50
-  local GRID_LEGEND_MAX_W = 96  -- 16 characters (the API maxLength) in Roboto 10
-  local GRID_COL_W   = 16 + 20 + GRID_LEGEND_MIN_W + 20 + 20 + 20 + 68 + 110
-  local GRID_COL_PAD = 6
-  local GRID_X_START = 12
-  local GRID_ROW_H   = 22
-  
-  -- Plugin width per model so that every chassis has the same right-side
-  -- margin (380px from chassis right edge to plugin right edge). Reserves
-  -- consistent space for future info controls regardless of chassis width.
-  -- Chassis strip geometry shared by the page builders: [display block]
-  -- [web UI chassis box] [status block], all CHASSIS_H tall, starting at
-  -- CHASSIS_X / _Y.
-  local CHASSIS_X  = 20
-  local CHASSIS_Y  = 4
-  local CHASSIS_H  = 142   -- web UI chassis box (chassisGeometry h)
-  local DISPLAY_W  = 190   -- device display block (logo, model, status, IP...)
-  local DISPLAY_GAP = 8    -- display block to chassis box
-  local STATUS_GAP  = 8    -- chassis box to status block
-  local STATUS_W    = 210  -- status block (RSTP lines, querier panel, PSU column)
-  
-  -- The status block keeps a CHASSIS_X margin to the page's right edge, like
-  -- the display block's on the left.
-  local function pageWidthForModel(model)
-    local rightMargin = STATUS_GAP + STATUS_W + CHASSIS_X
-    return CHASSIS_X + DISPLAY_W + DISPLAY_GAP + chassisGeometry(model).w + rightMargin
-  end
-  
-  -- Grid columns: as many as the page width fits with the GRID_X_START margin
-  -- kept on the right too; rows: ceil(ports / cols). Ports fill column by
-  -- column (1..rows down the first column, then the next), so the page stays
-  -- as short as the width allows.
-  local function gridDimsForModel(model)
-    local pageW = pageWidthForModel(model)
-    local cols  = math.floor((pageW - GRID_X_START * 2 + GRID_COL_PAD) / (GRID_COL_W + GRID_COL_PAD))
-    local pc    = getPortCount(model) or 30
-    cols = math.max(1, math.min(cols, pc))
-    local rows = math.ceil(pc / cols)
-    return cols, rows
-  end
-  
-  -- Legend TextBox width: the page width the grid columns leave free on the
-  -- right, shared between the columns, up to GRID_LEGEND_MAX_W. Neither the
-  -- page size nor the column count changes.
-  local function gridLegendWidth(model)
-    local cols  = gridDimsForModel(model)
-    local spare = pageWidthForModel(model) - GRID_X_START * 2 - (cols * GRID_COL_W + (cols - 1) * GRID_COL_PAD)
-    return math.min(GRID_LEGEND_MAX_W, GRID_LEGEND_MIN_W + math.floor(spare / cols))
-  end
-  
-  -- Groups and Trunks page geometry. Sections sit side by side (groups,
-  -- custom groups, trunks, custom trunks); each is a vertical list that
-  -- spills into extra sub-columns. Rows per section = the smallest count that
-  -- keeps all four sections inside the page width.
-  local GT_TOP_Y, GT_LABEL_H, GT_CARD_W, GT_CARD_H, GT_GAP_Y, GT_SECTION_GAP, GT_MARGIN_X = 55, 16, 90, 18, 3, 14, 16
-  local GT_SECTION_ITEMS = { 20, CUSTOM_GROUP_SLOTS, 1, CUSTOM_TRUNK_SLOTS }
-  
-  local function groupsPageWidthForRows(rows)
-    local w = GT_MARGIN_X
-    for i, n in ipairs(GT_SECTION_ITEMS) do
-      local subCols = math.max(1, math.ceil(n / rows))
-      w = w + subCols * GT_CARD_W + (subCols - 1) * 4
-      if i < #GT_SECTION_ITEMS then w = w + GT_SECTION_GAP end
-    end
-    return w + GT_MARGIN_X
-  end
-  
-  local function groupsRowsForModel(model)
-    local pageW = pageWidthForModel(model)
-    for rows = 4, 20 do
-      if groupsPageWidthForRows(rows) <= pageW then return rows end
-    end
-    return 20
-  end
-  
-  local function groupsPageHeightForModel(model)
-    local rows = groupsRowsForModel(model)
-    return GT_TOP_Y + GT_LABEL_H + 6 + rows * (GT_CARD_H + GT_GAP_Y) - GT_GAP_Y + 10
-  end
-  
-  local function chassisPageHeightForModel(model)
-    local topGap = 6
-    local _cols, rows = gridDimsForModel(model)
-    return CHASSIS_Y + CHASSIS_H + topGap + (rows * GRID_ROW_H) + topGap
-  end
-  
-  -- One height for every page of a model so tab switches don't resize the
-  -- plugin: the taller of the chassis page and the groups page.
-  local function pageHeightForModel(model)
-    return math.max(chassisPageHeightForModel(model), groupsPageHeightForModel(model))
-  end
   
   -- Two-row device header (Araneo-style), three columns left-aligned:
   --   Col 1: [Status]      / [Firmware]      — narrow, left edge
@@ -4192,6 +4774,13 @@ function GetControlLayout(props)
       StrokeWidth       = 0,
       Legend            = "",
     }
+  end
+  
+  -- The same, clickable (Momentary, not read-only): Port.Card N, zLldp.Panel.
+  local function clickableIconButton(layout, name, x, y, w, h)
+    iconButton(layout, name, x, y, w, h)
+    layout[name].ButtonStyle = "Momentary"
+    layout[name].IsReadOnly  = nil
   end
   
   local function buildStatusBlock(layout, gfx, theme, x, y, h, outlineW)
@@ -4470,7 +5059,8 @@ function GetControlLayout(props)
     for port, card in pairs(geometry.cards) do
       local y = chassisY + card.y
       if cardBarOnTop(card) then y = y - CARD_BAR_SPACE end
-      iconButton(layout, "Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
+      -- Clickable: opens the LLDP neighbor panel.
+      clickableIconButton(layout, "Port.Card " .. port, chassisX + card.x, y, card.w, card.h + CARD_BAR_SPACE)
     end
     local frameIndex = 0
     for _, frame in ipairs(geometry.frames) do
@@ -4797,11 +5387,33 @@ function GetControlLayout(props)
     end
   end
   
+  --------------------------------------------------------------------------------
+  -- LLDP neighbor panel (main page): centred under the chassis box, over the
+  -- port-settings grid; zLldp.Panel carries the panel SVG (lldpPanelSvg), its
+  -- two buttons sit in the title row's right part. Blank and hidden until the
+  -- runtime opens it (openLldpPanel in info.lua).
+  --------------------------------------------------------------------------------
+  local LLDP_PANEL_BUTTON_W, LLDP_PANEL_BUTTON_H, LLDP_PANEL_PAD = 70, 20, 8
+  
+  local function buildLldpPanel(layout, model)
+    local chassisX = CHASSIS_X + DISPLAY_W + DISPLAY_GAP
+    local x = chassisX + math.floor((chassisGeometry(model).w - LLDP_PANEL_W) / 2)
+    local y = CHASSIS_Y + CHASSIS_H + 6
+    -- Clickable, so a click on the panel never reaches the grid underneath.
+    clickableIconButton(layout, "zLldp.Panel", x, y, LLDP_PANEL_W, LLDP_PANEL_H)
+    local closeX = x + LLDP_PANEL_W - LLDP_PANEL_PAD - LLDP_PANEL_BUTTON_W
+    local buttonY = y + LLDP_PANEL_PAD
+    pickerButton(layout, "zLldp.Panel Close", closeX, buttonY, LLDP_PANEL_BUTTON_W, LLDP_PANEL_BUTTON_H)
+    pickerButton(layout, "zLldp.Panel To Legend", closeX - 6 - LLDP_PANEL_BUTTON_W, buttonY, LLDP_PANEL_BUTTON_W,
+      LLDP_PANEL_BUTTON_H)
+  end
+  
   local function buildControlsPage(layout, gfx, model)
     local theme = getThemeColors()
     buildChassisPage(layout, gfx, model, theme)
     buildGroupPickerPanel(layout, model, theme)
     buildSpeedPickerPanel(layout, model, theme)
+    buildLldpPanel(layout, model)
   end
   
   --------------------------------------------------------------------------------
@@ -5085,6 +5697,58 @@ function GetControlLayout(props)
       end)
   end
   
+  --------------------------------------------------------------------------------
+  -- Neighbors page (LLDP): the device header of Groups and Trunks, the column
+  -- headers of each block, then per port Lldp.Row N (every cell in one IconData
+  -- SVG, lldpRowSvg). The runtime fills the rows (refreshLldpRows in info.lua);
+  -- blank offline.
+  --------------------------------------------------------------------------------
+  local function buildNeighborsPage(layout, gfx, props)
+    local theme = getThemeColors()
+    local model = resolveModel(props)
+    local pageW, pageH = pageWidthForModel(model), pageHeightForModel(model)
+  
+    gfx[#gfx+1] = {
+      Type        = "Groupbox",
+      Fill        = theme.groupboxFill,
+      StrokeColor = GROUPBOX_STROKE_COLOR,
+      StrokeWidth = GROUPBOX_STROKE_WIDTH,
+      Position    = GROUPBOX_POSITION,
+      Size        = { pageW, pageH },
+    }
+    defineCommonDeviceInfo(layout, gfx, theme, 0, 0)
+  
+    local geometry = neighborsGeometry(model)
+    local columns  = neighborsColumns(geometry.blockW, geometry.compact)
+  
+    local headers = { { "name", "Neighbor" }, { "device", "Description" }, { "remotePort", "Port" }, { "ip", "IP" } }
+    local headerH = 14
+    for block = 0, geometry.blocks - 1 do
+      local blockX = LLDP_MARGIN_X + block * (geometry.blockW + LLDP_BLOCK_GAP)
+      for _, header in ipairs(headers) do
+        local column = columns[header[1]]
+        if column then
+          gfx[#gfx+1] = {
+            Type       = "Text",
+            Text       = header[2],
+            Position   = { blockX + column.x, geometry.rowsY - headerH },
+            Size       = { column.w, headerH },
+            Font       = "Roboto",
+            FontSize   = 10,
+            Color      = theme.textMuted,
+            HTextAlign = "Left",
+            VTextAlign = "Center",
+          }
+        end
+      end
+    end
+  
+    for port = 1, getPortCount(model) do
+      local x, y = neighborsRowPosition(model, port)
+      iconButton(layout, "Lldp.Row " .. port, x, y, geometry.blockW, geometry.rowH)
+    end
+  end
+  
   -- Q-SYS lists a pin in Control Pins only when its control has a layout
   -- entry. Every pin the main page does not place gets a Style "None" entry
   -- (hidden, pin kept); the PrettyName pass below files it in its folder.
@@ -5102,6 +5766,7 @@ function GetControlLayout(props)
   local pageBuilders = {
     ["Configuration"] = buildConfigurationPage,
     ["Groups and Trunks"] = buildGroupTrunkSettingsPage,
+    ["Neighbors"] = buildNeighborsPage,
   }
   
   setmetatable(pageBuilders, {
@@ -5164,6 +5829,7 @@ function GetPages(props)
   local pages = {}
   table.insert(pages, { name = modelString })
   table.insert(pages, { name = "Groups and Trunks" })
+  table.insert(pages, { name = "Neighbors" })
   table.insert(pages, { name = "Configuration" })
   
   return pages
@@ -5347,18 +6013,41 @@ if Controls then
   for p = 1, pc do
     local legendCtrl = Controls["Ports.Port " .. p .. ".Legend"]
     if legendCtrl then
-      legendCtrl.EventHandler = function(ctrl)
-        local newVal = ctrl.String
-        HttpClient.Upload {
-          Url     = string.format("http://%s/api/ports/port/%d/legend", state.baseIP, p),
-          Method  = "PUT",
-          Data    = jsonString(newVal),
-          Headers = MergeTables(
-            { ["Content-Type"] = "application/json" },
-            getAuthHeaders()
-          ),
-          EventHandler = function(_tbl, _status, _body, _err) end,
-        }
+      legendCtrl.EventHandler = function(ctrl) putPortLegend(p, ctrl.String) end
+    end
+  end
+  
+  -- Neighbor panel (main page): a chassis card opens it for its port (the
+  -- open port's card closes it), Close closes it, -> Legend writes the
+  -- port's proposed legend.
+  for p = 1, pc do
+    local card = Controls["Port.Card " .. p]
+    if card then
+      card.EventHandler = function(c)
+        if c.Boolean then toggleLldpPanel(p) end
+      end
+    end
+  end
+  
+  -- The panel body catches clicks (nothing to do): the grid under it stays out
+  -- of reach while it is open.
+  local panelBody = Controls["zLldp.Panel"]
+  if panelBody then panelBody.EventHandler = function() end end
+  
+  local panelClose = Controls["zLldp.Panel Close"]
+  if panelClose then
+    panelClose.EventHandler = function(c)
+      if c.Boolean then closeLldpPanel() end
+    end
+  end
+  
+  local panelLegend = Controls["zLldp.Panel To Legend"]
+  if panelLegend then
+    panelLegend.EventHandler = function(c)
+      local port = state.lldpPanelPort
+      local neighbor = port and state.lldp[port]
+      if c.Boolean and state.connection == "online" and neighbor then
+        putPortLegend(port, lldpView(neighbor).legend)
       end
     end
   end
@@ -5473,6 +6162,7 @@ if Controls then
   --------------------------------------------------------------------------------
   closeGroupPicker()
   closeSpeedPicker()
+  closeLldpPanel()
   
   for p = 1, pc do
     local cell = Controls["Port.Group " .. p]

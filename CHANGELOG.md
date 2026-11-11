@@ -123,6 +123,13 @@ New pins:
   Predefined Groups (5×4 grid), Custom Groups, Predefined Trunks, Custom
   Trunks. Trunk cards carry the ◤ corner indicator.
 
+### LLDP neighbors
+- A click on a chassis port opens a panel with its LLDP neighbor (name, model
+  and firmware, remote port, management IP, Q-SYS inventory status); a new
+  Neighbors tab lists every port. **→ Legend** and **Fill N empty legends**
+  turn neighbors into port legends (Fill only writes legends that are still
+  empty or `Port N`). No new pins; Configuration is now the fourth tab.
+
 ### Switch load
 - Reconnects back off (5, 10, 20, 40, then every 60 s) instead of retrying
   every 5 s: each reconnect replays every subscription and two REST

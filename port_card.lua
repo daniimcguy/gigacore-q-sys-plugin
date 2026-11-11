@@ -178,6 +178,9 @@ function portCardSvg(view)
     table.insert(parts, '<g>')
   end
   table.insert(parts, portCardBody(view))
+  if view.selected then  -- the port shown in the LLDP neighbor panel
+    table.insert(parts, rectElement(1, 1, w - 2, h - 2, 'rx="2" fill="none" stroke="#fff" stroke-width="2"'))
+  end
   table.insert(parts, '</g></svg>')
   return table.concat(parts)
 end
@@ -239,6 +242,7 @@ function portCardView(port, card)
     mlx = MULTILINKX_BAR[p.multilinkx],
     mr = p.mr == true,
     rstpRole = rstpRole,
+    selected = state.lldpPanelPort == port,
   }
 end
 

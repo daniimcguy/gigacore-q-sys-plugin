@@ -267,6 +267,7 @@ function getPortState(port)
     mr             = false,  -- IGMP snooping router port
     rstpRole       = nil,    -- RSTP role ("root", "designated", ...)
     multilinkx     = nil,    -- "active" | "member" | nil (MultiLinkX LAG)
+    legend         = nil,    -- legend as the switch reports it, nil until read
     speed          = nil,
     lastValidSpeed = nil,
     speedPending   = false,
@@ -427,6 +428,12 @@ function putPortMemberOf(port)
   putPortObject(port, "member_of", body, function()
     SetPortMemberOf(port, memberOfKey(kind, id))
   end)
+end
+
+-- PUT /api/ports/port/N/legend: the legend pin, "-> Legend" and Fill. A 200
+-- updates the port state (the WS notification may lag).
+function putPortLegend(port, text)
+  putPortObject(port, "legend", jsonString(text), function() SetPortLegend(port, text) end)
 end
 
 --------------------------------------------------------------------------------
@@ -672,6 +679,9 @@ end
 -- previous session as current) and when the WebSocket drops (the web UI's
 -- not-live look). The next snapshot rewrites them all.
 function clearPortCards()
+  -- First: closing re-renders the selected card, which the blanking below
+  -- then clears.
+  closeLldpPanel()
   state.cardSvg = {}
   state.tenGShown = nil
   for port = 1, (state.portCount or 0) do
@@ -681,6 +691,7 @@ function clearPortCards()
   -- or the 3 s reconcile) would otherwise redraw them while offline.
   state.querierSvg, state.querierByVid = "", {}
   Controls["Querier.Badges"].Legend = ""
+  clearLldp()
   if not state.chassis then return end
   local index = 0
   for _, frame in ipairs(state.chassis.frames) do
@@ -778,6 +789,9 @@ function subscribeAllSystem()
 
   -- MultiLinkX LAGs: any notification re-reads the whole list (scheduleLagSync)
   state.ws:Write('{"subscription":{"path":"/ports/lags/lag","action":"add","method":"changes"}}')
+
+  -- LLDP neighbors: the answer carries the whole list (handleLldpPath)
+  state.ws:Write('{"subscription":{"path":"/lldp/neighbor","action":"add","method":"changes"}}')
 end
 
 -- The switch answers a subscription under a group or PoE port that does not
@@ -999,8 +1013,8 @@ local function applyPortObject(elem)
   local link = top:match('"link_state"%s*:%s*"([^"]*)"')
   if link then SetPortLinkState(port, link) end
 
-  local legend = top:match('"legend"%s*:%s*"([^"]*)"')
-  if legend then setPinString("Ports.Port " .. port .. ".Legend", legend) end
+  local legend = lldpJsonString(top, "legend")
+  if legend then SetPortLegend(port, legend) end
 
   if nested.counters then
     local p = getPortState(port)
@@ -1177,6 +1191,169 @@ function scheduleLagSync()
   end, 0.5)
 end
 
+--------------------------------------------------------------------------------
+-- LLDP neighbors: GET /api/lldp/neighbor in the reconcile, WS /lldp/neighbor
+-- (parsing and shown values in lldp.lua).
+--------------------------------------------------------------------------------
+state.lldp = state.lldp or {}  -- port -> neighbor (lldpParseNeighbors), ports 1..portCount only
+
+function refreshLldpViews()
+  refreshLldpRows()
+  refreshLldpPanel()
+end
+
+-- The whole neighbor list (GET body or subscription answer). A port the
+-- model does not have (O26-I lists 32, LAG ports 66 and up) is left out.
+function applyLldp(text)
+  local lldp = {}
+  for port, neighbor in pairs(lldpParseNeighbors(text)) do
+    if port <= (state.portCount or 0) then lldp[port] = neighbor end
+  end
+  state.lldp = lldp
+  refreshLldpViews()
+end
+
+-- Neighbors page. Rows are redrawn only when their SVG changed (state.lldpSvg).
+state.lldpSvg = state.lldpSvg or {}  -- port -> last row SVG written to Lldp.Row N
+
+local function lldpColors()
+  local theme = getThemeColors()
+  return { fill = rgbHex(theme.cardFill), border = "#CED3DD", text = rgbHex(theme.textPrimary),
+    muted = rgbHex(theme.textMuted) }
+end
+
+-- Fill of the LLDP text buttons (white text): navy in both themes (the light
+-- buttonOffColor is too pale for white text).
+local function lldpButtonHex()
+  local theme = getThemeColors()
+  return rgbHex(state.darkMode and theme.buttonOffColor or theme.textPrimary)
+end
+
+-- A text button (-> Legend, Close), shown.
+local function showLldpButton(name, label)
+  local button = Controls[name]
+  local hex = lldpButtonHex()
+  button.Legend = label
+  button.Color = hex
+  pcall(function() button.OffColor = hex end)
+  setOverlayVisible(name, true)
+end
+
+function refreshLldpRows()
+  local model = resolveModel(Properties)
+  local geometry = neighborsGeometry(model)
+  local columns = neighborsColumns(geometry.blockW, geometry.compact)
+  local colors = lldpColors()
+  for port = 1, state.portCount do
+    local neighbor = state.lldp[port]
+    local svg = lldpRowSvg({ port = port, w = geometry.blockW, h = geometry.rowH,
+      view = neighbor and lldpView(neighbor) }, colors, columns)
+    if state.lldpSvg[port] ~= svg then
+      state.lldpSvg[port] = svg
+      Controls["Lldp.Row " .. port].Legend = iconLegend(svg)
+    end
+  end
+end
+
+-- Blank the Neighbors page (WS Error / Closed, runtime start) and forget the
+-- neighbors, like the cards: Designer keeps the last runtime Legend offline.
+function clearLldp()
+  state.lldp, state.lldpSvg = {}, {}
+  for port = 1, (state.portCount or 0) do
+    local row = Controls["Lldp.Row " .. port]
+    if row then row.Legend = "" end
+  end
+end
+
+-- Neighbor panel (main page): opened by a click on a chassis card, over the
+-- port-settings grid. The selected card is outlined (portCardView.selected).
+-- The buttons' names sort after zLldp.Panel, so they draw on top of it.
+local LLDP_PANEL_CONTROLS = { "zLldp.Panel", "zLldp.Panel To Legend", "zLldp.Panel Close" }
+
+function refreshLldpPanel()
+  local port = state.lldpPanelPort
+  if not port then return end
+  local neighbor = state.lldp[port]
+  local view = neighbor and lldpView(neighbor)
+  local svg = lldpPanelSvg({ port = port, view = view }, lldpColors())
+  if svg == state.lldpPanelSvg then return end
+  state.lldpPanelSvg = svg
+  Controls["zLldp.Panel"].Legend = iconLegend(svg)
+  setOverlayVisible("zLldp.Panel", true)
+  showLldpButton("zLldp.Panel Close", "Close")
+  if view then
+    showLldpButton("zLldp.Panel To Legend", "\u{2192} Legend")
+  else
+    setOverlayVisible("zLldp.Panel To Legend", false)
+  end
+end
+
+-- Only while online; an open picker closes. The previous and the new
+-- selected cards re-render (the card SVG cache skips the others).
+function openLldpPanel(port)
+  if state.connection ~= "online" then return end
+  closeGroupPicker()
+  closeSpeedPicker()
+  local previous = state.lldpPanelPort
+  state.lldpPanelPort, state.lldpPanelSvg = port, nil
+  if previous and previous ~= port then renderPortUI(previous) end
+  renderPortUI(port)
+  refreshLldpPanel()
+end
+
+function closeLldpPanel()
+  local port = state.lldpPanelPort
+  state.lldpPanelPort, state.lldpPanelSvg = nil, nil
+  if port then renderPortUI(port) end
+  for _, name in ipairs(LLDP_PANEL_CONTROLS) do setOverlayVisible(name, false) end
+end
+
+-- A click on the open port's card closes the panel, any other card opens it.
+function toggleLldpPanel(port)
+  if state.lldpPanelPort == port then
+    closeLldpPanel()
+  else
+    openLldpPanel(port)
+  end
+end
+
+function syncLldp()
+  HttpClient.Get {
+    Url     = string.format("http://%s/api/lldp/neighbor", state.baseIP),
+    Headers = MergeTables({ ["Content-Type"] = "application/json" }, getAuthHeaders()),
+    Timeout = 10,
+    EventHandler = counted(function(_tbl, code, body, err)
+      log("GET /api/lldp/neighbor => HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      if code ~= 200 or type(body) ~= "string" then return end
+      applyLldp(body)
+    end),
+  }
+end
+
+-- A burst of neighbor notifications re-reads the list once, 0.5 s after its
+-- first one.
+function scheduleLldpSync()
+  if state.lldpSyncPending then return end
+  state.lldpSyncPending = true
+  Timer.CallAfter(function()
+    state.lldpSyncPending = false
+    syncLldp()
+  end, 0.5)
+end
+
+-- /lldp/neighbor: the subscription answer carries the whole list; a TTL
+-- refresh (one every few seconds per neighbor) is ignored; anything else (the
+-- shape of an added or removed neighbor was never observed) re-reads the list.
+function handleLldpPath(path, raw)
+  if path ~= "/lldp/neighbor" then return false end
+  if raw:match('"notification_type"%s*:%s*"([^"]+)"') == "subscription_response" then
+    applyLldp(raw)
+  elseif not lldpIsTtlOnly(raw) then
+    scheduleLldpSync()
+  end
+  return true
+end
+
 function reconcileAll()
   log("reconcileAll: ws=" .. tostring(state.ws ~= nil) .. " ip=" .. tostring(state.baseIP))
   if not state.ws or state.baseIP == "" then return end
@@ -1188,6 +1365,7 @@ function reconcileAll()
   fetchCustomColors()
   syncPowerStatus()
   syncSpanningTree()
+  syncLldp()
 end
 
 -- The poll tick and the 3 s follow-up; the reconcile at Connected always runs.
@@ -1528,6 +1706,10 @@ function openWS(ip)
     state.lagRoleSubscribed, state.groupSubscribed, state.poeSubscribed = {}, {}, false
     refreshQuerierBadges()
     refreshMrPorts()
+    -- Same reason for the neighbors: Fill or -> Legend must never write a
+    -- previous switch's neighbor to this one (the subscription answer refills).
+    closeLldpPanel()
+    clearLldp()
     SetConnection("online")
     local ok, err = pcall(function()
       updateAuthStatus("Authenticated", "#00A000")
@@ -1813,8 +1995,9 @@ function handlePortPath(path, raw)
   end
 
   if path == ("/ports/port/" .. port .. "/legend") then
-    local v = extractString(raw)
-    if v then setPinString("Ports.Port " .. port .. ".Legend", v) end
+    -- Decoded (quotes, backslashes); an emptied legend ("") lands too.
+    local v = lldpJsonString(raw, "new_value")
+    if v then SetPortLegend(port, v) end
     return true
   end
 
@@ -1911,6 +2094,7 @@ function parseNotification(raw)
   if not path then return end
   if handleDevicePath(path, raw)       then return end
   if handleGroupPath(path, raw)        then return end
+  if handleLldpPath(path, raw)         then return end
   if path:find("^/ports/lags/lag")     then scheduleLagSync() return end
   if handlePortPath(path, raw)         then return end
   if handleSystemPath(path, raw)       then return end
@@ -1959,6 +2143,11 @@ end
 function SetPortRlinkxEnabled(port, enabled)
   getPortState(port).rlinkxEnabled = enabled
   renderPortUI(port)
+end
+
+function SetPortLegend(port, value)
+  getPortState(port).legend = value
+  setPinString("Ports.Port " .. port .. ".Legend", value)
 end
 
 -- Raw link_speed fields for the Link Speed pins; nil leaves a field as is.
@@ -2651,10 +2840,11 @@ local function pickerControlNames()
   return names
 end
 
--- Hiding also blanks the control: Designer keeps the last runtime Legend
--- and String when the design goes offline but resets IsInvisible, so any
--- leftover text would paint over the chassis through the transparent button.
-local function setPickerVisible(name, visible)
+-- Pickers, LLDP buttons. Hiding also blanks the control: Designer keeps the
+-- last runtime Legend and String when the design goes offline but resets
+-- IsInvisible, so any leftover text would paint over the page through the
+-- transparent button.
+function setOverlayVisible(name, visible)
   local ctrl = Controls[name]
   if not ctrl then return end
   pcall(function() ctrl.IsInvisible = not visible end)
@@ -2668,7 +2858,7 @@ end
 
 function closeGroupPicker()
   state.pickerPort = nil
-  for _, name in ipairs(pickerControlNames()) do setPickerVisible(name, false) end
+  for _, name in ipairs(pickerControlNames()) do setOverlayVisible(name, false) end
 end
 
 -- One picker button: Legend = name (check mark on the port's current
@@ -2679,7 +2869,7 @@ local function paintPickerItem(name, label, hex, isCurrent)
   ctrl.Legend = isCurrent and (label .. " ✓") or label
   ctrl.Color  = hex
   pcall(function() ctrl.OffColor = hex end)
-  setPickerVisible(name, true)
+  setOverlayVisible(name, true)
 end
 
 local function memberColorHex(key)
@@ -2689,6 +2879,7 @@ end
 
 function openGroupPicker(port)
   if state.baseIP == "" then return end
+  closeLldpPanel()
   state.pickerPort = port
   local current = getPortState(port).memberOf
   local theme   = getThemeColors()
@@ -2705,13 +2896,13 @@ function openGroupPicker(port)
   local title = Controls["zPicker.Title"]
   if title then
     title.String = string.format("Port %d: assign to a group or trunk", port)
-    setPickerVisible("zPicker.Title", true)
+    setOverlayVisible("zPicker.Title", true)
   end
   for i, text in ipairs(PICKER_SECTION_TITLES) do
     local lbl = Controls["zPicker.Label " .. i]
     if lbl then
       lbl.String = text
-      setPickerVisible("zPicker.Label " .. i, true)
+      setOverlayVisible("zPicker.Label " .. i, true)
     end
   end
   paintPickerItem("zPicker.None",   "None",   PICKER_UNASSIGNED_HEX, current == nil)
@@ -2723,7 +2914,7 @@ function openGroupPicker(port)
       local key = "Group: " .. id
       paintPickerItem(name, memberOfDisplayName(key), memberColorHex(key), current == key)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
   for slot = 1, 1 + CUSTOM_TRUNK_SLOTS do
@@ -2732,7 +2923,7 @@ function openGroupPicker(port)
       local key = "Trunk: " .. id
       paintPickerItem(name, memberOfDisplayName(key), memberColorHex(key), current == key)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
 end
@@ -2775,7 +2966,7 @@ end
 
 function closeSpeedPicker()
   state.speedPickerPort = nil
-  for _, name in ipairs(speedPickerControlNames()) do setPickerVisible(name, false) end
+  for _, name in ipairs(speedPickerControlNames()) do setOverlayVisible(name, false) end
 end
 
 -- Speeds offered for a port. Unknown type (no /api/ports snapshot yet)
@@ -2789,6 +2980,7 @@ end
 
 function openSpeedPicker(port)
   if state.baseIP == "" then return end
+  closeLldpPanel()
   state.speedPickerPort = port
   local pstate  = getPortState(port)
   local current = (pstate.enabled == false) and "Disabled" or pstate.speed
@@ -2800,7 +2992,7 @@ function openSpeedPicker(port)
   local title = Controls["zSpeed.Title"]
   if title then
     title.String = string.format("Port %d: link speed", port)
-    setPickerVisible("zSpeed.Title", true)
+    setOverlayVisible("zSpeed.Title", true)
   end
   paintPickerItem("zSpeed.Cancel", "Cancel", rgbHex(theme.buttonOffColor), false)
   for i, label in ipairs(SPEED_CHOICES) do
@@ -2810,7 +3002,7 @@ function openSpeedPicker(port)
       paintPickerItem(name, label,
         rgbHex(isCurrent and theme.accentCyan or theme.buttonOffColor), isCurrent)
     else
-      setPickerVisible(name, false)
+      setOverlayVisible(name, false)
     end
   end
 end
