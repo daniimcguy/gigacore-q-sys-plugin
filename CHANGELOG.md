@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [v2.0.0] - 2026-04-22
+## [v2.0.0] - 2026-11-18
 
 ### ⚠ Breaking changes — pin rename
 
@@ -124,11 +124,10 @@ New pins:
   Trunks. Trunk cards carry the ◤ corner indicator.
 
 ### LLDP neighbors
-- A click on a chassis port opens a panel with its LLDP neighbor (name, model
-  and firmware, remote port, management IP, Q-SYS inventory status); a new
-  Neighbors tab lists every port. **→ Legend** and **Fill N empty legends**
-  turn neighbors into port legends (Fill only writes legends that are still
-  empty or `Port N`). No new pins; Configuration is now the fourth tab.
+- A click on a chassis port opens a panel with its LLDP neighbor (name,
+  description, remote port, management IP, MAC); a new Neighbors tab lists
+  every port. **→ Legend** in the panel writes the neighbor as the port
+  legend. No new pins; Configuration is now the fourth tab.
 
 ### Switch load
 - Reconnects back off (5, 10, 20, 40, then every 60 s) instead of retrying

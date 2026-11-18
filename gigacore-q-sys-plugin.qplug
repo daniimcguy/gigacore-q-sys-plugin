@@ -16,7 +16,7 @@
 --------------------------------------------------------------------------------
 PluginInfo = {
   Name         = "Luminex~GigaCore",
-  Version      = "2.0",
+  Version      = "2.0.0",
   BuildVersion = "0.0.0.0",
   Id           = "a64f9db0-dcfe-4d58-af32-6f1240343e5c",
   Description  = "Monitoring and control for Luminex GigaCore network switches",

@@ -19,20 +19,16 @@ This is an open-source Q-SYS plugin for controlling and monitoring
 ## LLDP neighbors
 
 The plugin reads the switch's LLDP neighbors and shows, for each port, the
-device on the other end: its name, model and firmware, the port it uses and
-its management IP address.
+device on the other end: its name, its description (model and firmware), the
+port it uses and its management IP address.
 
 - **Neighbor panel**: click a port on the chassis to open its panel; click the
   same port again, or **Close**, to close it. **→ Legend** writes the neighbor
   as the port legend: its name, then ` p` and its port when that is a number
   (`Stage Left p5`), at most 16 characters (a long name is shortened so the
   port number stays).
-- **Neighbors tab**: one row per port, with a **→ Legend** button on every
-  port that has a neighbor. **Fill N empty legends** writes the proposed
-  legend on every port whose legend is still empty or the switch default
-  `Port N`; a legend typed by hand is never overwritten.
-- **Q-SYS column**: a neighbor whose LLDP system name matches a device of the
-  Q-SYS design inventory shows that device and its status color.
+- **Neighbors tab**: one row per port with its neighbor's name, description,
+  port and IP address.
 - **UCI**: for the panel to work on a UCI, place the `Port.Card N` controls
   together with `zLldp.Panel`, `zLldp.Panel To Legend` and `zLldp.Panel Close`.
 
